@@ -63,6 +63,7 @@ from openai.types.chat.chat_completion_message_tool_call import (
 from ..events import (
     Aggregator,
     Event,
+    ModelCallFinishedEvent,
     TextMessageContentEvent,
     TextMessageEndEvent,
     TextMessageStartEvent,
@@ -145,6 +146,13 @@ class OpenAIChatCompletionAggregator(Aggregator[ChatCompletionChunk, ChatComplet
         Raises:
             RuntimeError: If no valid chunks were received
         """
+        # RFC-0023 §阶段 ② — emit per-call metadata BEFORE choice validation.
+        # If the stream only contained reasoning_content (DeepSeek + logprobs),
+        # _choice_aggregators may still be empty but the call did happen and
+        # downstream consumers (parity tests, agent_events_middleware) need
+        # the metadata. So fire the event first, then validate.
+        self._emit_metadata_event()
+
         if not self._choice_aggregators or not self._value.id:
             raise RuntimeError("Chat completion stream did not receive any valid chunks from OpenAI")
 
@@ -157,6 +165,28 @@ class OpenAIChatCompletionAggregator(Aggregator[ChatCompletionChunk, ChatComplet
         # Update _value with final choices and return
         self._value.choices = built_choices
         return self._value.model_copy(deep=True)
+
+    def _emit_metadata_event(self) -> None:
+        """RFC-0023 §阶段 ② — emit ModelCallFinishedEvent once per call.
+
+        Token usage is owned by ``UsageUpdateEvent`` (canonical normalized form).
+        """
+        # finish_reason lives on the per-choice aggregator; first choice wins
+        # (matches Set B's selection of the first choice as canonical).
+        stop_reason: str | None = None
+        if self._choice_aggregators:
+            first = self._choice_aggregators[sorted(self._choice_aggregators)[0]]
+            stop_reason = first.finish_reason
+        self._on_event(
+            ModelCallFinishedEvent(
+                run_id=self._run_id,
+                message_id=self._value.id or "",
+                model_name=self._value.model or None,
+                model_call_id=self._value.id or None,
+                stop_reason=stop_reason,
+                timestamp=int(datetime.now().timestamp() * 1000),
+            )
+        )
 
     def clear(self) -> None:
         """
@@ -232,6 +262,16 @@ class _ChoiceAggregator(Aggregator[ChatCompletionChunkChoice, ChatCompletionChoi
         self._thinking_message_id: str | None = None
         self._thinking_started = False
         self._thinking_ended = False
+
+    @property
+    def finish_reason(self) -> str | None:
+        """Public read-only accessor for ``ChatCompletionChoice.finish_reason``.
+
+        Used by the parent ``OpenAIChatCompletionAggregator`` to populate
+        ``ModelCallFinishedEvent.stop_reason`` without poking at the
+        protected ``_value`` attribute (pyright reportPrivateUsage).
+        """
+        return self._value.finish_reason
 
     def aggregate(self, item: ChatCompletionChunkChoice) -> None:
         """

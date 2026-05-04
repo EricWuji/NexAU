@@ -60,7 +60,14 @@ def _coerce_to_sdk_chunks(
 
 
 def run_set_a_openai_chat(events: list[Any]) -> list[Event]:
-    """Feed events into Set A's OpenAIChatCompletionAggregator and collect events."""
+    """Feed events into Set A's OpenAIChatCompletionAggregator and collect events.
+
+    Set A's OAC aggregator emits the §阶段 ② ``ModelCallFinishedEvent`` from
+    ``build()``, not from ``aggregate()``. Call build() at the end to
+    trigger it; ignore the RuntimeError it raises when no choices were
+    received (synthetic fixtures sometimes carry only metadata-shape
+    chunks; the metadata event still fires before the validation raises).
+    """
     sdk_chunks = _coerce_to_sdk_chunks(events)
     collected: list[Event] = []
     aggregator = OpenAIChatCompletionAggregator(
@@ -69,6 +76,10 @@ def run_set_a_openai_chat(events: list[Any]) -> list[Event]:
     )
     for chunk in sdk_chunks:
         aggregator.aggregate(chunk)
+    try:
+        aggregator.build()
+    except RuntimeError:
+        pass
     return collected
 
 

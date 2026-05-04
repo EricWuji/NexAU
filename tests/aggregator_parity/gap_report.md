@@ -1,6 +1,6 @@
 # Aggregator Parity Gap Report
 
-_Generated: 2026-05-03 08:33:27 UTC by `tests/aggregator_parity/scripts/gen_gap_report.py`._
+_Generated: 2026-05-04 04:24:17 UTC by `tests/aggregator_parity/scripts/gen_gap_report.py`._
 
 This report is the input list for RFC-0023 §阶段 ②. It enumerates
 every field Set A's event stream doesn't carry today (vs. Set B's
@@ -29,16 +29,11 @@ aggregation and the vendor's own non-stream JSON response.
 These fields are present on Set B's `finalize()` dict but cannot
 be reconstructed from the AG-UI event stream into a UMP `Message`.
 Two paths to close them in §阶段 ②: (a) add the fields to `Message`,
-or (b) have the gap-checker consume `LLMCallMetadataEvent` from
+or (b) have the gap-checker consume `ModelCallFinishedEvent` from
 the agui event stream directly. Either way, the gap is at the
 `Message`-shape level even though Set A already emits the metadata.
 
-| Field | Fixtures | Sample provider | Sample fixture | Note |
-| --- | --- | --- | --- | --- |
-| `top_level.model` | 66 | `anthropic` | `plain_text` | no Set A event carries this — target for LLMCallMetadataEvent |
-| `top_level.usage` | 61 | `anthropic` | `plain_text` | carried indirectly by UsageUpdateEvent emitted from middleware reading Set B today |
-| `top_level.stop_reason` | 27 | `anthropic` | `plain_text` | no Set A event carries this — target for LLMCallMetadataEvent |
-| `block[0].ReasoningBlock.signature` | 4 | `anthropic` | `rec_claude_thinking_real` | ThinkingTextMessage* event extension target |
+✅ Zero weak gaps.
 
 ## Axis 3 — Set A vs vendor non-stream JSON
 

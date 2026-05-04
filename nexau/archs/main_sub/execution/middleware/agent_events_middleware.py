@@ -240,7 +240,17 @@ class AgentEventsMiddleware(Middleware):
         return HookResult.no_changes()
 
     def after_model(self, hook_input: AfterModelHookInput) -> HookResult:
-        """Emit a usage update event after each completed LLM call."""
+        """Emit a usage update event after each completed LLM call.
+
+        Transition note (RFC-0023 §阶段 ② → ③): with §阶段 ② landed, Set A's
+        per-provider aggregators now emit ``ModelCallFinishedEvent`` carrying
+        ``usage`` themselves. ``model_response.usage`` (read here) and the
+        new event are equivalent during the bridge period. We keep the
+        middleware reading ``model_response`` for one release so live SSE
+        ``UsageUpdateEvent`` timing/shape doesn't shift under existing
+        front-end consumers; §阶段 ③ retires Set B and this branch will
+        switch to subscribing ``ModelCallFinishedEvent`` instead.
+        """
 
         # GC: discard finished per-call aggregators to prevent unbounded dict growth.
         self.openai_chat_completion_aggregators.clear()

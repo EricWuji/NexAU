@@ -123,11 +123,16 @@ class ThinkingTextMessageStartEvent(AgUiThinkingTextMessageStartEvent):
         parent_message_id: ID of the parent message/response (for correlation to parent)
         thinking_message_id: Unique identifier for the thinking message (for correlating Start/Content/End)
         run_id: ID of the agent run that produced this event
+        is_redacted: True when this thinking block carries an opaque
+            ``redacted_thinking`` payload (Anthropic) instead of plaintext —
+            consumers should not expect content events.
+            RFC-0023 §阶段 ② extension.
     """
 
     parent_message_id: str
     thinking_message_id: str
     run_id: str
+    is_redacted: bool = False
 
 
 class ThinkingTextMessageContentEvent(AgUiThinkingTextMessageContentEvent):
@@ -145,9 +150,17 @@ class ThinkingTextMessageEndEvent(AgUiThinkingTextMessageEndEvent):
 
     Attributes:
         thinking_message_id: Unique identifier linking to the start event
+        signature: Optional reasoning signature (Anthropic ``SignatureDelta`` /
+            Gemini ``thoughtSignature``) emitted by the provider for replay
+            authentication. RFC-0023 §阶段 ② extension.
+        redacted_data: Opaque payload for ``redacted_thinking`` blocks
+            (Anthropic) — present only when ``is_redacted=True`` was set on
+            the matching Start event. RFC-0023 §阶段 ② extension.
     """
 
     thinking_message_id: str
+    signature: str | None = None
+    redacted_data: str | None = None
 
 
 # ============= IMAGE EVENTS =============
@@ -325,6 +338,60 @@ class UsageUpdateEvent(BaseEvent):
     usage: TokenUsage
 
 
+class ModelCallFinishedEvent(BaseEvent):
+    """Sidecar event emitted once per LLM call carrying per-call metadata
+    that doesn't belong on any single message-level event.
+
+    RFC-0023 §阶段 ② — closes the Set A weak gaps for ``model_name`` /
+    ``stop_reason`` / ``model_call_id``. Set A previously had no event
+    carrying these, so consumers (parity tests, agent_events_middleware)
+    had to read ``ModelResponse`` from Set B. With this event Set A is
+    self-sufficient.
+
+    Emitted at the END of an LLM call (after all content events and
+    after ``UsageUpdateEvent``), exactly once per call. ``model_name`` and
+    ``stop_reason`` may be None if the provider doesn't surface them on
+    a given response (e.g. truncated stream).
+
+    **Token usage is NOT on this event** — ``UsageUpdateEvent`` (already a
+    deployed contract carrying the normalized ``TokenUsage``) is the
+    canonical token-counts source. Two events for the same data was an
+    earlier RFC draft anti-pattern; resolved by removing usage here.
+
+    **Vendor-specific extras are NOT on this event** either. An earlier
+    draft had a ``provider_extras: dict`` pocket for OpenAI Chat's
+    ``system_fingerprint``/``service_tier`` and OpenAI Responses' ``status``/
+    ``incomplete_details``, but no consumer in the codebase actually
+    subscribed to it. Per YAGNI, removed. If a real downstream need
+    appears, the inherited ``BaseEvent.raw_event: Any`` slot from ag_ui
+    is available without changing this class's schema.
+
+    Attributes:
+        run_id: Agent run that issued the LLM call (correlation key).
+        message_id: Assistant message id this call produced — same id used
+            on the matching ``TextMessageStartEvent``.
+        model_name: Vendor-side model identifier (e.g. ``claude-sonnet-4-5``,
+            ``gpt-5``, ``gemini-3-flash-preview``).
+        model_call_id: Vendor-side response id (Anthropic ``message.id``,
+            OpenAI ``id``, Gemini ``responseId``). Useful for tracing back
+            to provider-side logs.
+        stop_reason: Vendor-specific terminator string, **verbatim**:
+            Anthropic ``end_turn`` / ``tool_use`` / ``stop_sequence`` /
+            ``max_tokens`` / ``pause_turn`` / ``refusal``; OpenAI Chat
+            ``stop`` / ``length`` / ``tool_calls`` / ``content_filter``;
+            OpenAI Responses ``completed`` / ``incomplete``; Gemini
+            ``STOP`` / ``MAX_TOKENS`` / ``SAFETY`` / ``RECITATION`` / ...
+            Cross-provider mapping (if needed) is the consumer's job.
+    """
+
+    type: Literal["MODEL_CALL_FINISHED"] = "MODEL_CALL_FINISHED"  # type: ignore[assignment]
+    run_id: str
+    message_id: str
+    model_name: str | None = None
+    model_call_id: str | None = None
+    stop_reason: str | None = None
+
+
 class RetryEvent(BaseEvent):
     """Event emitted when an LLM request is about to retry after a transient failure."""
 
@@ -370,6 +437,7 @@ Event = (
     | UserMessageEvent
     | TeamMessageEvent
     | UsageUpdateEvent
+    | ModelCallFinishedEvent
     | RetryEvent
 )
 
@@ -384,6 +452,7 @@ __all__ = [
     "CompactionFinishedEvent",
     "TransportErrorEvent",
     "UsageUpdateEvent",
+    "ModelCallFinishedEvent",
     "RetryEvent",
     # Text message events
     "TextMessageStartEvent",

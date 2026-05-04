@@ -170,7 +170,7 @@ provider's Set A aggregator emits the standard event types.
 - **PR-A.1** — Gemini provider (no public model on the gateway tested) +
   Anthropic `RedactedThinkingBlock` / `server_tool_use` recordings (need a
   reasoning model with redacted thinking enabled)
-- **PR-B (RFC-0023 §阶段 ②)** — Add `LLMCallMetadataEvent` + extend
+- **PR-B (RFC-0023 §阶段 ②)** — Add `ModelCallFinishedEvent` + extend
   `ThinkingTextMessage*`; once landed, `test_*_weak_gaps_*` will be
   augmented to **assert** each gap is closed (no longer just record)
 - **PR-C (RFC-0023 §阶段 ③)** — Retire Set B; parity tests degenerate to
@@ -189,7 +189,7 @@ not parity-testable in their current form.
 
 The live OpenAI Chat recordings under `fixtures/openai_chat/recordings/`
 use canonical OpenAI format and exercise both Sets cleanly.
-- **PR-B (RFC-0023 §阶段 ②)** — Add `LLMCallMetadataEvent` + extend
+- **PR-B (RFC-0023 §阶段 ②)** — Add `ModelCallFinishedEvent` + extend
   `ThinkingTextMessage*`; once landed, `test_*_weak_gaps_*` will be
   augmented to **assert** each gap is closed (no longer just record)
 - **PR-C (RFC-0023 §阶段 ③)** — Retire Set B; parity tests degenerate to

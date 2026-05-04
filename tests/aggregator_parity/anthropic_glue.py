@@ -27,7 +27,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from anthropic.types import RawMessageStreamEvent
+from anthropic.types import RawMessageStopEvent, RawMessageStreamEvent
 from pydantic import TypeAdapter
 
 from nexau.archs.llm.llm_aggregators import AnthropicEventAggregator
@@ -140,15 +140,28 @@ def _coerce_to_sdk_events(
 
 
 def run_set_a_anthropic(events: list[Any]) -> list[Event]:
-    """Feed events into Set A's AnthropicEventAggregator and collect emitted events."""
+    """Feed events into Set A's AnthropicEventAggregator and collect emitted events.
+
+    Lifted dict fixtures sometimes don't include a trailing ``RawMessageStopEvent``
+    because the original test only cared about content blocks. Without it,
+    the aggregator's end-of-call hooks (TextMessageEndEvent, the §阶段 ②
+    ModelCallFinishedEvent) never fire. Detect that case and invoke the stop
+    handler manually so parity tests see the same finalized event stream
+    they would on a real wire.
+    """
     sdk_events = _coerce_to_sdk_events(events)
     collected: list[Event] = []
     aggregator = AnthropicEventAggregator(
         on_event=collected.append,
         run_id="parity-test-run",
     )
+    saw_stop = False
     for ev in sdk_events:
+        if isinstance(ev, RawMessageStopEvent):
+            saw_stop = True
         aggregator.aggregate(ev)
+    if not saw_stop:
+        aggregator._handle_message_stop()  # noqa: SLF001 — synthetic flush for fixtures lacking stop event
     return collected
 
 

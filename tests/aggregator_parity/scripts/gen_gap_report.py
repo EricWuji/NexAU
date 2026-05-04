@@ -233,7 +233,7 @@ def _render(strong_rows, vendor_rows, known_divergent_strong) -> str:
     out.append("These fields are present on Set B's `finalize()` dict but cannot")
     out.append("be reconstructed from the AG-UI event stream into a UMP `Message`.")
     out.append("Two paths to close them in §阶段 ②: (a) add the fields to `Message`,")
-    out.append("or (b) have the gap-checker consume `LLMCallMetadataEvent` from")
+    out.append("or (b) have the gap-checker consume `ModelCallFinishedEvent` from")
     out.append("the agui event stream directly. Either way, the gap is at the")
     out.append("`Message`-shape level even though Set A already emits the metadata.")
     out.append("")

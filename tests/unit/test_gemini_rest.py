@@ -1368,6 +1368,7 @@ class TestGeminiRestEventAggregator:
     def test_basic_text_emits_start_content_end(self, aggregator, events_captured):
         """Text chunks should emit START → CONTENT → END."""
         from nexau.archs.llm.llm_aggregators.events import (
+            ModelCallFinishedEvent,
             TextMessageContentEvent,
             TextMessageEndEvent,
             TextMessageStartEvent,
@@ -1376,7 +1377,8 @@ class TestGeminiRestEventAggregator:
         aggregator.aggregate({"candidates": [{"content": {"parts": [{"text": "Hello"}]}}]})
         aggregator.aggregate({"candidates": [{"content": {"parts": [{"text": " world"}]}, "finishReason": "STOP"}]})
 
-        assert len(events_captured) == 4
+        # 5 events: Start, Content×2, End, ModelCallFinishedEvent (RFC-0023 §阶段 ②)
+        assert len(events_captured) == 5
         assert isinstance(events_captured[0], TextMessageStartEvent)
         assert events_captured[0].role == "assistant"
         assert events_captured[0].run_id == "test_run_1"
@@ -1385,6 +1387,7 @@ class TestGeminiRestEventAggregator:
         assert isinstance(events_captured[2], TextMessageContentEvent)
         assert events_captured[2].delta == " world"
         assert isinstance(events_captured[3], TextMessageEndEvent)
+        assert isinstance(events_captured[4], ModelCallFinishedEvent)
 
     def test_thinking_emits_thinking_events(self, aggregator, events_captured):
         """Thinking parts (thought=true) should emit thinking lifecycle events."""
@@ -1439,7 +1442,9 @@ class TestGeminiRestEventAggregator:
         assert json.loads(tool_events[1].delta) == {"city": "Tokyo"}
         assert isinstance(tool_events[2], ToolCallEndEvent)
 
-        assert isinstance(events_captured[-1], TextMessageEndEvent)
+        # Last event is ModelCallFinishedEvent (§阶段 ②); TextMessageEndEvent precedes it.
+        assert type(events_captured[-1]).__name__ == "ModelCallFinishedEvent"
+        assert any(isinstance(e, TextMessageEndEvent) for e in events_captured)
 
     def test_mixed_thinking_text_and_function_call(self, aggregator, events_captured):
         """Mixed content should emit all event types in correct order."""
@@ -1487,7 +1492,9 @@ class TestGeminiRestEventAggregator:
         aggregator.aggregate({"candidates": [{"finishReason": "STOP"}]})
 
         assert isinstance(events_captured[0], TextMessageStartEvent)
-        assert isinstance(events_captured[-1], TextMessageEndEvent)
+        # TextMessageEndEvent is now followed by ModelCallFinishedEvent (§阶段 ②)
+        assert any(isinstance(e, TextMessageEndEvent) for e in events_captured)
+        assert type(events_captured[-1]).__name__ == "ModelCallFinishedEvent"
 
     def test_clear_resets_state(self, aggregator, events_captured):
         """clear() should reset all state so the aggregator can be reused."""

@@ -33,6 +33,7 @@ from typing import cast
 
 from ..events import (
     Event,
+    ModelCallFinishedEvent,
     TextMessageContentEvent,
     TextMessageEndEvent,
     TextMessageStartEvent,
@@ -66,6 +67,16 @@ class GeminiRestEventAggregator:
         self._thinking_started = False
         self._thinking_ended = False
         self._tool_call_count = 0
+        # Per-call metadata accumulated across chunks (RFC-0023 §阶段 ②)
+        self._model_name: str | None = None
+        self._model_call_id: str | None = None
+        self._finish_reason: str | None = None
+        self._usage: dict[str, object] | None = None
+        # Thinking signature stored per chunk; attached to End event.
+        self._thought_signature: str | None = None
+        # Whether ModelCallFinishedEvent has fired (idempotent guard — _handle_finish
+        # may run multiple times if chunks repeat finishReason).
+        self._metadata_emitted = False
 
     def aggregate(self, chunk: dict[str, object]) -> None:
         """Process a single Gemini REST streaming chunk and emit events.
@@ -75,6 +86,15 @@ class GeminiRestEventAggregator:
         Args:
             chunk: Parsed JSON dict from a Gemini SSE data line
         """
+        # 0. Accumulate cross-chunk metadata (RFC-0023 §阶段 ②)
+        if isinstance(chunk.get("modelVersion"), str):
+            self._model_name = cast(str, chunk["modelVersion"])
+        if isinstance(chunk.get("responseId"), str):
+            self._model_call_id = cast(str, chunk["responseId"])
+        usage_md = chunk.get("usageMetadata")
+        if isinstance(usage_md, dict):
+            self._usage = cast(dict[str, object], usage_md)
+
         # 1. 提取 candidates
         candidates_raw = chunk.get("candidates")
         if not isinstance(candidates_raw, list) or not candidates_raw:
@@ -91,6 +111,7 @@ class GeminiRestEventAggregator:
             # finishReason 可能在没有 content 的 chunk 中
             finish_reason = candidate_dict.get("finishReason")
             if isinstance(finish_reason, str) and finish_reason:
+                self._finish_reason = finish_reason
                 self._handle_finish()
             return
         content_dict = cast(dict[str, object], content_obj)
@@ -104,6 +125,14 @@ class GeminiRestEventAggregator:
             if not isinstance(part_obj, dict):
                 continue
             part_dict = cast(dict[str, object], part_obj)
+
+            # Gemini sometimes emits a part containing ONLY thoughtSignature
+            # (no text / no functionCall) as a sibling to a thinking text part.
+            # Capture it for the ThinkingTextMessageEndEvent regardless of
+            # whether the part also carries content.
+            sig = part_dict.get("thoughtSignature")
+            if isinstance(sig, str) and sig:
+                self._thought_signature = sig
 
             is_thought = part_dict.get("thought") is True
             has_text = "text" in part_dict
@@ -133,6 +162,12 @@ class GeminiRestEventAggregator:
         self._thinking_started = False
         self._thinking_ended = False
         self._tool_call_count = 0
+        self._model_name = None
+        self._model_call_id = None
+        self._finish_reason = None
+        self._usage = None
+        self._thought_signature = None
+        self._metadata_emitted = False
 
     def _ensure_message_started(self) -> None:
         """Emit TextMessageStartEvent on first content of any kind."""
@@ -163,6 +198,7 @@ class GeminiRestEventAggregator:
                 ThinkingTextMessageEndEvent(
                     timestamp=int(datetime.now().timestamp() * 1000),
                     thinking_message_id=self._thinking_message_id,
+                    signature=self._thought_signature,
                 )
             )
 
@@ -189,6 +225,11 @@ class GeminiRestEventAggregator:
 
     def _handle_thinking_part(self, part: dict[str, object]) -> None:
         """Emit thinking content events for a thought=true text part."""
+        # Gemini may emit thoughtSignature on the same part or a sibling part;
+        # capture whenever seen and attach to the End event.
+        sig = part.get("thoughtSignature")
+        if isinstance(sig, str) and sig:
+            self._thought_signature = sig
         text = part.get("text")
         if not isinstance(text, str) or not text:
             return
@@ -277,6 +318,7 @@ class GeminiRestEventAggregator:
                 ThinkingTextMessageEndEvent(
                     timestamp=int(datetime.now().timestamp() * 1000),
                     thinking_message_id=self._thinking_message_id,
+                    signature=self._thought_signature,
                 )
             )
 
@@ -285,6 +327,21 @@ class GeminiRestEventAggregator:
             self._on_event(
                 TextMessageEndEvent(
                     message_id=self._message_id,
+                    timestamp=int(datetime.now().timestamp() * 1000),
+                )
+            )
+
+        # 3. RFC-0023 §阶段 ② — emit per-call metadata exactly once.
+        # Token usage owned by UsageUpdateEvent (canonical TokenUsage).
+        if not self._metadata_emitted:
+            self._metadata_emitted = True
+            self._on_event(
+                ModelCallFinishedEvent(
+                    run_id=self._run_id,
+                    message_id=self._message_id,
+                    model_name=self._model_name,
+                    model_call_id=self._model_call_id,
+                    stop_reason=self._finish_reason,
                     timestamp=int(datetime.now().timestamp() * 1000),
                 )
             )

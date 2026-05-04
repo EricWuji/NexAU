@@ -39,7 +39,7 @@ Currently NOT captured (weak equivalence — the gap)
 - Reasoning signature / redacted_data — same
 
 These gaps are exactly what RFC-0023 §阶段 ② aims to close via
-``LLMCallMetadataEvent`` and ``ThinkingTextMessage*`` field extension.
+``ModelCallFinishedEvent`` and ``ThinkingTextMessage*`` field extension.
 """
 
 from __future__ import annotations

@@ -526,34 +526,83 @@ def collect_weak_gaps(
     msg_a: Message,
     msg_b: Message,
     set_b_payload: dict[str, Any],
+    agui_events: list[Event] | None = None,
 ) -> list[ParityGap]:
     """Identify fields present in Set B's output that Set A doesn't carry.
 
     These are the targets for RFC-0023 §阶段 ② event extensions.
+
+    With §阶段 ② landed, Set A emits ``ModelCallFinishedEvent`` carrying
+    ``model_name`` / ``stop_reason`` / ``usage`` / ``llm_call_id``. We scan
+    ``agui_events`` for that event and only flag a gap if Set B has the
+    field set but Set A's event doesn't carry an equivalent. Synthetic
+    fixtures that don't surface metadata on either side stay clean.
     """
     gaps: list[ParityGap] = []
 
-    # Top-level metadata fields that live on the Set B finalize() dict but
-    # have no representation in Set A's event stream.
-    for field, note in [
-        ("usage", "carried indirectly by UsageUpdateEvent emitted from middleware reading Set B today"),
-        ("stop_reason", "no Set A event carries this — target for LLMCallMetadataEvent"),
-        ("model", "no Set A event carries this — target for LLMCallMetadataEvent"),
-    ]:
-        if set_b_payload.get(field) is not None:
+    # Pull the per-call metadata event Set A emits at end-of-call (§阶段 ②).
+    # There's at most one ModelCallFinishedEvent per LLM call; take the first
+    # if duplicated.
+    from nexau.archs.llm.llm_aggregators.events import ModelCallFinishedEvent  # local import to avoid cycle
+
+    a_metadata: ModelCallFinishedEvent | None = None
+    if agui_events:
+        for ev in agui_events:
+            if isinstance(ev, ModelCallFinishedEvent):
+                a_metadata = ev
+                break
+
+    # Set B finalize key → Set A ModelCallFinishedEvent attribute name.
+    # ``usage`` is intentionally NOT in this map — it lives on the separate
+    # ``UsageUpdateEvent`` (canonical TokenUsage), not on ModelCallFinishedEvent.
+    # PR-C.2 will have aggregator emit UsageUpdateEvent itself; until then
+    # the middleware emits it from model_response, so axis-2 isn't the right
+    # place to track usage anyway.
+    set_b_to_set_a_field = {
+        "stop_reason": "stop_reason",
+        "model": "model_name",
+    }
+    for set_b_field, set_a_attr in set_b_to_set_a_field.items():
+        b_value = set_b_payload.get(set_b_field)
+        if b_value is None:
+            continue  # Nothing to compare, no gap
+        a_value = getattr(a_metadata, set_a_attr, None) if a_metadata else None
+        if a_value is None:
             gaps.append(
                 ParityGap(
-                    field=f"top_level.{field}",
+                    field=f"top_level.{set_b_field}",
                     set_a_value=None,
-                    set_b_value=set_b_payload[field],
-                    note=note,
+                    set_b_value=b_value,
+                    note=(
+                        "Set B has it but Set A's ModelCallFinishedEvent doesn't carry it "
+                        "(either the event wasn't emitted on this fixture or the field is None). "
+                        "Either fix the aggregator to capture this field, or — if the fixture "
+                        "genuinely doesn't surface it on the wire — add a synthetic event."
+                    ),
                 )
             )
 
-    # Per-ReasoningBlock signature / redacted_data
+    # Per-ReasoningBlock signature / redacted_data — Set A now ships these on
+    # ThinkingTextMessageEndEvent. Scan the event stream and only flag a gap
+    # if the matching End event lacks what Set B's block carries.
+    end_signatures: list[str | None] = []
+    end_redacted: list[str | None] = []
+    if agui_events:
+        from nexau.archs.llm.llm_aggregators.events import ThinkingTextMessageEndEvent  # noqa: PLC0415
+
+        for ev in agui_events:
+            if isinstance(ev, ThinkingTextMessageEndEvent):
+                end_signatures.append(ev.signature)
+                end_redacted.append(ev.redacted_data)
+
+    reasoning_index = 0
     for i, (ba, bb) in enumerate(zip(msg_a.content, msg_b.content, strict=False)):
         if isinstance(ba, ReasoningBlock) and isinstance(bb, ReasoningBlock):
-            if bb.signature and not ba.signature:
+            sig_from_event = end_signatures[reasoning_index] if reasoning_index < len(end_signatures) else None
+            red_from_event = end_redacted[reasoning_index] if reasoning_index < len(end_redacted) else None
+            reasoning_index += 1
+
+            if bb.signature and not (ba.signature or sig_from_event):
                 gaps.append(
                     ParityGap(
                         field=f"block[{i}].ReasoningBlock.signature",
@@ -562,7 +611,7 @@ def collect_weak_gaps(
                         note="ThinkingTextMessage* event extension target",
                     )
                 )
-            if bb.redacted_data and not ba.redacted_data:
+            if bb.redacted_data and not (ba.redacted_data or red_from_event):
                 gaps.append(
                     ParityGap(
                         field=f"block[{i}].ReasoningBlock.redacted_data",
@@ -685,5 +734,5 @@ def run_parity(
     return ParityReport(
         fixture=fixture_name,
         strong_failures=compare_strong(msg_a, msg_b),
-        weak_gaps=collect_weak_gaps(msg_a=msg_a, msg_b=msg_b, set_b_payload=set_b_payload),
+        weak_gaps=collect_weak_gaps(msg_a=msg_a, msg_b=msg_b, set_b_payload=set_b_payload, agui_events=agui_events),
     )

@@ -38,9 +38,11 @@ from anthropic.types import (
     RawMessageStartEvent,
     RawMessageStopEvent,
     RawMessageStreamEvent,
+    SignatureDelta,
     TextDelta,
     ThinkingDelta,
 )
+from anthropic.types import RedactedThinkingBlock as AnthropicRedactedThinkingBlock
 from anthropic.types import ServerToolUseBlock as AnthropicServerToolUseBlock
 from anthropic.types import ThinkingBlock as AnthropicThinkingBlock
 from anthropic.types import ToolUseBlock as AnthropicToolUseBlock
@@ -48,6 +50,7 @@ from anthropic.types import ToolUseBlock as AnthropicToolUseBlock
 from ..events import (
     Aggregator,
     Event,
+    ModelCallFinishedEvent,
     TextMessageContentEvent,
     TextMessageEndEvent,
     TextMessageStartEvent,
@@ -92,9 +95,20 @@ class AnthropicEventAggregator(Aggregator[RawMessageStreamEvent, None]):
         self._tool_ended: dict[int, bool] = {}
         # Thinking state per index
         self._thinking_ids: dict[int, str] = {}
+        # Per-thinking-block metadata (RFC-0023 §阶段 ②) — captured during
+        # the stream, attached to ThinkingTextMessageEndEvent at block close.
+        self._thinking_signatures: dict[int, str] = {}
+        self._thinking_redacted_data: dict[int, str] = {}
+        self._thinking_is_redacted: dict[int, bool] = {}
         # Buffer for input_json_delta fragments that arrive before content_block_start.
         # key = content-block index, value = list of non-empty partial_json strings.
         self._pending_tool_deltas: dict[int, list[str]] = {}
+        # Per-call metadata (RFC-0023 §阶段 ②) — captured across the stream,
+        # emitted as a single ModelCallFinishedEvent at message_stop.
+        self._model_name: str | None = None
+        self._model_call_id: str | None = None
+        self._stop_reason: str | None = None
+        self._usage: dict[str, object] | None = None
 
     def aggregate(self, item: RawMessageStreamEvent) -> None:
         """Process a single raw stream event."""
@@ -108,7 +122,7 @@ class AnthropicEventAggregator(Aggregator[RawMessageStreamEvent, None]):
             case RawContentBlockStopEvent():
                 self._handle_content_block_stop(item)
             case RawMessageDeltaEvent():
-                pass  # Usage updates, not needed for frontend events
+                self._handle_message_delta(item)
             case RawMessageStopEvent():
                 self._handle_message_stop()
 
@@ -127,7 +141,14 @@ class AnthropicEventAggregator(Aggregator[RawMessageStreamEvent, None]):
         self._tool_started.clear()
         self._tool_ended.clear()
         self._thinking_ids.clear()
+        self._thinking_signatures.clear()
+        self._thinking_redacted_data.clear()
+        self._thinking_is_redacted.clear()
         self._pending_tool_deltas.clear()
+        self._model_name = None
+        self._model_call_id = None
+        self._stop_reason = None
+        self._usage = None
 
     # ---- Internal handlers ----
 
@@ -136,6 +157,13 @@ class AnthropicEventAggregator(Aggregator[RawMessageStreamEvent, None]):
 
     def _handle_message_start(self, event: RawMessageStartEvent) -> None:
         self._message_id = event.message.id
+        # Capture per-call metadata for ModelCallFinishedEvent (RFC-0023 §阶段 ②)
+        self._model_call_id = event.message.id
+        self._model_name = event.message.model
+        try:
+            self._usage = event.message.usage.model_dump() if event.message.usage else None
+        except AttributeError:
+            self._usage = None
         if not self._started:
             self._started = True
             self._on_event(
@@ -146,6 +174,18 @@ class AnthropicEventAggregator(Aggregator[RawMessageStreamEvent, None]):
                     run_id=self._run_id,
                 )
             )
+
+    def _handle_message_delta(self, event: RawMessageDeltaEvent) -> None:
+        """RawMessageDeltaEvent carries the cumulative ``stop_reason`` and the
+        final ``usage`` totals — both targets for ``ModelCallFinishedEvent``."""
+        # ``event.delta`` is non-Optional in the Anthropic SDK type but its
+        # fields can be empty; only stop_reason is what we want here.
+        if event.delta.stop_reason:
+            self._stop_reason = event.delta.stop_reason
+        if event.usage:
+            # Merge cumulative usage on top of message_start's snapshot
+            # (Anthropic streams cumulative output_tokens here).
+            self._usage = (self._usage or {}) | event.usage.model_dump()
 
     # ---- Tool registration helpers ----
 
@@ -212,12 +252,38 @@ class AnthropicEventAggregator(Aggregator[RawMessageStreamEvent, None]):
             case AnthropicThinkingBlock():
                 thinking_id = str(uuid.uuid4())
                 self._thinking_ids[idx] = thinking_id
+                # Capture inline signature if the start block ships one
+                # (rare; usually arrives via SignatureDelta later).
+                if getattr(block, "signature", None):
+                    self._thinking_signatures[idx] = block.signature
                 self._on_event(
                     ThinkingTextMessageStartEvent(
                         parent_message_id=self._message_id,
                         thinking_message_id=thinking_id,
                         run_id=self._run_id,
                         timestamp=self._ts(),
+                    )
+                )
+            case AnthropicRedactedThinkingBlock():
+                # Opaque encrypted-thinking block. Synthesize a thinking_id,
+                # mark redacted, capture the data; consumers don't expect
+                # ContentEvents — only Start (is_redacted=True) and End
+                # (with redacted_data set).
+                thinking_id = str(uuid.uuid4())
+                self._thinking_ids[idx] = thinking_id
+                self._thinking_is_redacted[idx] = True
+                if getattr(block, "data", None):
+                    self._thinking_redacted_data[idx] = block.data
+                # Re-tag for the stop handler — RedactedThinkingBlock.type is
+                # "redacted_thinking" but our close path keys on "thinking".
+                self._block_types[idx] = "thinking"
+                self._on_event(
+                    ThinkingTextMessageStartEvent(
+                        parent_message_id=self._message_id,
+                        thinking_message_id=thinking_id,
+                        run_id=self._run_id,
+                        timestamp=self._ts(),
+                        is_redacted=True,
                     )
                 )
             case _:
@@ -285,6 +351,11 @@ class AnthropicEventAggregator(Aggregator[RawMessageStreamEvent, None]):
                         timestamp=self._ts(),
                     )
                 )
+            case SignatureDelta(signature=sig):
+                # Anthropic emits SignatureDelta near end-of-thinking carrying
+                # the replay-auth signature for the block. Stash for End.
+                if sig:
+                    self._thinking_signatures[idx] = sig
             case _:
                 pass
 
@@ -321,6 +392,8 @@ class AnthropicEventAggregator(Aggregator[RawMessageStreamEvent, None]):
                 ThinkingTextMessageEndEvent(
                     thinking_message_id=thinking_id,
                     timestamp=self._ts(),
+                    signature=self._thinking_signatures.get(idx),
+                    redacted_data=self._thinking_redacted_data.get(idx),
                 )
             )
 
@@ -347,6 +420,20 @@ class AnthropicEventAggregator(Aggregator[RawMessageStreamEvent, None]):
         self._on_event(
             TextMessageEndEvent(
                 message_id=self._message_id,
+                timestamp=self._ts(),
+            )
+        )
+        # RFC-0023 §阶段 ② — emit per-call metadata as the closing event so
+        # consumers (parity tests, agent_events_middleware) get model_name /
+        # stop_reason / model_call_id without peeking at Set B's ModelResponse.
+        # Token usage is owned by ``UsageUpdateEvent`` (canonical TokenUsage).
+        self._on_event(
+            ModelCallFinishedEvent(
+                run_id=self._run_id,
+                message_id=self._message_id,
+                model_name=self._model_name,
+                model_call_id=self._model_call_id,
+                stop_reason=self._stop_reason,
                 timestamp=self._ts(),
             )
         )

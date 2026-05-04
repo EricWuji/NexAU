@@ -1088,7 +1088,8 @@ class TestOpenAIChatCompletionAggregator:
         assert "ToolCallStartEvent" in event_types
         assert "ToolCallArgsEvent" in event_types
         assert "ToolCallEndEvent" in event_types
-        assert event_types[-1] == "TextMessageEndEvent"
+        assert event_types[-1] == "ModelCallFinishedEvent"
+        assert "TextMessageEndEvent" in event_types
 
         # Verify exactly one start and one end for the tool call
         tc_starts = [e for e in events if type(e).__name__ == "ToolCallStartEvent"]

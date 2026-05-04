@@ -24,6 +24,6 @@ The harness compares both outputs after reducing each to a canonical ``Message``
 
 Strong equivalence (must pass): role, content blocks (count, order, type, fields).
 Weak equivalence (recorded as gaps): usage, stop_reason, model_name, reasoning
-signature, redacted_data — the fields that motivate ``LLMCallMetadataEvent`` and
+signature, redacted_data — the fields that motivate ``ModelCallFinishedEvent`` and
 ``ThinkingTextMessage*`` extensions in RFC-0023 §阶段 ②.
 """

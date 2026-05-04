@@ -157,8 +157,10 @@ def test_negative_set_a_truncating_events_is_caught() -> None:
 
     def run_set_a_buggy(events):
         all_events = run_set_a_anthropic(events)
-        # Drop the final third of events to simulate Set A short-circuiting
-        return all_events[: max(1, len(all_events) * 2 // 3)]
+        # Keep only the first event (TextMessageStartEvent) so all content
+        # events are dropped — guaranteed to mutate the reconstructed Message
+        # regardless of how many trailing metadata/lifecycle events exist.
+        return all_events[:1]
 
     events = _good_events()
     report = run_parity(

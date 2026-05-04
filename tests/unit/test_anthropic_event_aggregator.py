@@ -199,6 +199,7 @@ class TestTextMessageFlow:
             "TextMessageContentEvent",
             "TextMessageContentEvent",
             "TextMessageEndEvent",
+            "ModelCallFinishedEvent",
         ]
 
         start = events[0]
@@ -253,6 +254,7 @@ class TestToolCallFlow:
             "ToolCallArgsEvent",
             "ToolCallEndEvent",
             "TextMessageEndEvent",
+            "ModelCallFinishedEvent",
         ]
 
         tool_start = events[1]
@@ -361,6 +363,7 @@ class TestThinkingFlow:
             "ThinkingTextMessageContentEvent",
             "ThinkingTextMessageEndEvent",
             "TextMessageEndEvent",
+            "ModelCallFinishedEvent",
         ]
 
         think_start = events[1]
@@ -453,7 +456,8 @@ class TestMixedContentBlocks:
         assert "ThinkingTextMessageStartEvent" in types
         assert "ThinkingTextMessageEndEvent" in types
         assert "TextMessageContentEvent" in types
-        assert types[-1] == "TextMessageEndEvent"
+        assert types[-1] == "ModelCallFinishedEvent"
+        assert "TextMessageEndEvent" in types
 
     def test_thinking_then_tool_call(self):
         """Thinking block followed by a tool_use block."""

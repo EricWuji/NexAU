@@ -56,6 +56,7 @@ from openai.types.responses.response_text_done_event import ResponseTextDoneEven
 from ..events import (
     Aggregator,
     Event,
+    ModelCallFinishedEvent,
     TextMessageContentEvent,
     TextMessageEndEvent,
     TextMessageStartEvent,
@@ -235,6 +236,21 @@ class OpenAIResponsesAggregator(Aggregator[ResponseStreamEvent, Response]):
             # back by output_index.
             preserved_output = self._value.output if self._value.output else item.response.output
             self._value = item.response.model_copy(update={"output": preserved_output}, deep=True)
+            # RFC-0023 §阶段 ② — emit per-call metadata once at completion.
+            # Token usage is owned by ``UsageUpdateEvent``; not included here.
+            status = getattr(self._value, "status", None)
+            self._on_event(
+                ModelCallFinishedEvent(
+                    run_id=self._run_id,
+                    message_id=self._value.id or "",
+                    model_name=self._value.model or None,
+                    model_call_id=self._value.id or None,
+                    # OpenAI Responses uses ``status`` (completed/incomplete)
+                    # as the closest analogue of stop_reason.
+                    stop_reason=str(status) if status else None,
+                    timestamp=int(datetime.now().timestamp() * 1000),
+                )
+            )
             return
 
     def build(self) -> Response:

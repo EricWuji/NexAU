@@ -60,7 +60,7 @@ The pattern that surfaced all five bugs:
 3. **Compare Messages** — strong assertions on `role` + content blocks
    (count / order / type / primary fields), weak gap recording for fields
    only one Set carries (usage / model / stop_reason — those need Set A
-   to emit `LLMCallMetadataEvent` in §阶段 ②).
+   to emit `ModelCallFinishedEvent` in §阶段 ②).
 4. **Strong failure = real production bug** — no skipping with xfail
    unless the divergence is a documented design decision pending RFC
    resolution.
