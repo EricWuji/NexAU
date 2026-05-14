@@ -101,16 +101,6 @@ class TestCliAgentRuntimeBuild:
         user_after_tool_hook = Mock(name="user_after_tool_hook")
         captured_config: dict[str, object] = {}
 
-        class FakeBuilder:
-            def __init__(self, config, _base_path):  # type: ignore[no-untyped-def]
-                captured_config.update(config)
-
-            def __getattr__(self, _name):  # type: ignore[no-untyped-def]
-                return lambda *args, **kwargs: self
-
-            def get_agent_config(self):  # type: ignore[no-untyped-def]
-                return "agent-config"
-
         fake_agent = Mock(name="agent")
 
         with (
@@ -123,13 +113,14 @@ class TestCliAgentRuntimeBuild:
                     "after_tool_hooks": [user_after_tool_hook],
                 },
             ),
-            patch("nexau.cli.agent_runner.AgentConfigBuilder", FakeBuilder),
+            patch("nexau.cli.agent_runner.AgentConfig.from_dict", return_value="agent-config") as from_dict,
             patch("nexau.cli.agent_runner.Agent", return_value=fake_agent) as agent_cls,
             patch.object(runtime, "_build_restored_global_storage", return_value=None),
         ):
             agent = runtime._build_agent_from_config(session_id="session")
 
         assert agent is fake_agent
+        captured_config.update(from_dict.call_args.args[0])
         assert captured_config["after_model_hooks"] == [user_after_model_hook]
         assert captured_config["after_tool_hooks"] == [user_after_tool_hook]
         agent_cls.assert_called_once()
@@ -157,50 +148,12 @@ class TestCliAgentRuntimeBuild:
             sandbox_config=LocalSandboxConfig(work_dir=str(work_dir)),
         )
 
-        class FakeBuilder:
-            def __init__(self, config: dict[str, object], base_path: Path) -> None:
-                self._config = config
-                self._base_path = base_path
-
-            def build_core_properties(self) -> FakeBuilder:
-                return self
-
-            def build_llm_config(self) -> FakeBuilder:
-                return self
-
-            def build_mcp_servers(self) -> FakeBuilder:
-                return self
-
-            def build_hooks(self) -> FakeBuilder:
-                return self
-
-            def build_tracers(self) -> FakeBuilder:
-                return self
-
-            def build_tools(self) -> FakeBuilder:
-                return self
-
-            def build_sub_agents(self) -> FakeBuilder:
-                return self
-
-            def build_skills(self) -> FakeBuilder:
-                return self
-
-            def build_system_prompt_path(self) -> FakeBuilder:
-                return self
-
-            def build_sandbox(self) -> FakeBuilder:
-                return self
-
-            def get_agent_config(self) -> AgentConfig:
-                return agent_config
-
         probe_mock = Mock(side_effect=AssertionError("Git Bash discovery must not call subprocess.run"))
         with (
             monkeypatch.context() as patcher,
             patch("nexau.cli.agent_runner.load_yaml_with_vars", return_value={"name": "agent"}),
             patch("nexau.cli.agent_runner.normalize_agent_config_dict", return_value={"name": "agent"}),
-            patch("nexau.cli.agent_runner.AgentConfigBuilder", FakeBuilder),
+            patch("nexau.cli.agent_runner.AgentConfig.from_dict", return_value=agent_config),
             patch.object(runtime, "_build_restored_global_storage", return_value=None),
             patch("nexau.archs.main_sub.agent.openai") as mock_openai,
             patch("subprocess.run", probe_mock),

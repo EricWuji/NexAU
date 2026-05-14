@@ -181,7 +181,7 @@ class ToolExecutor:
         tracer: BaseTracer,
         agent_state: "AgentState",
         sandbox: BaseSandbox | None,
-        tool: Any,
+        tool: Tool,
         tool_name: str,
         tool_parameters: dict[str, Any],
         tool_call_id: str,
@@ -208,6 +208,7 @@ class ToolExecutor:
         attributes: JsonDict = {
             "agent_name": agent_state.agent_name,
             "agent_id": agent_state.agent_id,
+            "source_id": tool.source_id,
         }
 
         trace_ctx = TraceContext(tracer, span_name, SpanType.TOOL, inputs, attributes)
@@ -233,7 +234,7 @@ class ToolExecutor:
         self,
         agent_state: "AgentState",
         sandbox: BaseSandbox | None,
-        tool: Any,
+        tool: Tool,
         tool_name: str,
         tool_parameters: dict[str, Any],
         tool_call_id: str,
@@ -295,7 +296,7 @@ class ToolExecutor:
         execution_result = self.finalize_tool_execution(
             agent_state=agent_state,
             sandbox=sandbox,
-            tool=cast(Tool, tool),
+            tool=tool,
             tool_name=tool_name,
             tool_parameters=tool_parameters,
             tool_call_id=tool_call_id,
@@ -326,6 +327,7 @@ class ToolExecutor:
         """
 
         raw_output = self._normalize_tool_output(result)
+        agent_state.record_source_id(tool.source_id)
 
         if tool_name in self.stop_tools:
             logger.info(

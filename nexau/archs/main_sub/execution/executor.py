@@ -1980,6 +1980,7 @@ class Executor:
                     trace_attrs: dict[str, Any] = {
                         "agent_name": agent_state.agent_name,
                         "agent_id": agent_state.agent_id,
+                        "source_id": tool_obj.source_id,
                     }
                     trace_ctx = TraceContext(tracer, span_name, SpanType.TOOL, trace_inputs, trace_attrs)
                     trace_ctx.__enter__()

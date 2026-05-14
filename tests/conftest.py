@@ -41,7 +41,8 @@ from tests.utils.platform import (
 
 # Load .env BEFORE importing nexau modules (they may read env vars during init)
 _project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-dotenv.load_dotenv(os.path.join(_project_root, ".env"), override=True)
+if os.environ.get("PYTHON_DOTENV_DISABLED", "").lower() not in {"1", "true", "yes"}:
+    dotenv.load_dotenv(os.path.join(_project_root, ".env"), override=True)
 
 # Provide a lightweight anthropic stub for environments without the package
 

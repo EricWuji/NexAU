@@ -1510,6 +1510,7 @@ class Agent:
             "agent_name": self.agent_name,
             "model": getattr(self.config.llm_config, "model", None),
         }
+        agent_state.record_source_id(self.config.source_id)
 
         trace_ctx = TraceContext(tracer, span_name, span_type, inputs, attributes)
         with trace_ctx:
@@ -1522,6 +1523,8 @@ class Agent:
                     trace_id=trace_id,
                 )
                 trace_ctx.set_outputs({"response": response})
+                plugin_attrs = {"plugin_sources": sorted(agent_state.plugin_sources)}
+                trace_ctx.set_attributes(plugin_attrs)
                 return response
             except Exception:
                 raise

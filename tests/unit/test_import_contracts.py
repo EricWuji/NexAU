@@ -82,6 +82,7 @@ def test_import_nexau_is_lightweight() -> None:
         "Tool",
         "LLMConfig",
         "AgentConfig",
+        "Plugin",
         "Skill",
         "BaseTracer",
         "CompositeTracer",
@@ -100,15 +101,15 @@ def test_top_level_public_exports_still_resolve() -> None:
         """
         import json
 
-        from nexau import Agent, AgentConfig, LLMConfig, Skill, Tool
+        from nexau import Agent, AgentConfig, LLMConfig, Plugin, Skill, Tool
 
         print(json.dumps({
-            "names": [Agent.__name__, AgentConfig.__name__, LLMConfig.__name__, Skill.__name__, Tool.__name__]
+            "names": [Agent.__name__, AgentConfig.__name__, LLMConfig.__name__, Plugin.__name__, Skill.__name__, Tool.__name__]
         }))
         """
     )
 
-    assert payload["names"] == ["Agent", "AgentConfig", "LLMConfig", "Skill", "Tool"]
+    assert payload["names"] == ["Agent", "AgentConfig", "LLMConfig", "Plugin", "Skill", "Tool"]
 
 
 def test_builtin_file_tools_binding_import_is_lightweight() -> None:

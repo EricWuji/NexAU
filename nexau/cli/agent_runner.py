@@ -37,7 +37,7 @@ from nexau.archs.main_sub.agent_context import GlobalStorage
 from nexau.archs.main_sub.config import (
     ConfigError,
 )
-from nexau.archs.main_sub.config.config import AgentConfigBuilder
+from nexau.archs.main_sub.config.config import AgentConfig
 from nexau.archs.main_sub.config.schema import normalize_agent_config_dict
 from nexau.archs.main_sub.execution.hooks import (
     AfterModelHookInput,
@@ -1489,20 +1489,7 @@ class CliAgentRuntime:
             llm_config_raw["base_url"] = self._llm_override["base_url"]
             llm_config_raw["api_key"] = self._llm_override["api_key"]
 
-        builder = AgentConfigBuilder(normalized_config, self.config_path.parent)
-        agent_config = (
-            builder.build_core_properties()
-            .build_llm_config()
-            .build_mcp_servers()
-            .build_hooks()
-            .build_tracers()
-            .build_tools()
-            .build_sub_agents()
-            .build_skills()
-            .build_system_prompt_path()
-            .build_sandbox()
-            .get_agent_config()
-        )
+        agent_config = AgentConfig.from_dict(normalized_config, self.config_path.parent)
         restored_storage = self._build_restored_global_storage()
         restored_agent_id = None if self._restored_snapshot is None else self._restored_snapshot.get("agent_id")
         return Agent(

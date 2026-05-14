@@ -26,7 +26,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, TypeVar, cast
 
 import dotenv
-from pydantic import ConfigDict, Field, PrivateAttr, field_validator, model_validator
+from pydantic import ConfigDict, Field, PrivateAttr, ValidationError, field_validator, model_validator
 
 from nexau.archs.llm.llm_config import LLMConfig
 from nexau.archs.main_sub.skill import Skill, build_load_skill_tool, build_tool_skill
@@ -217,17 +217,81 @@ class AgentConfig(
                 stacklevel=2,
             )
 
+        agent_config_schema = AgentConfigSchema.from_yaml(str(config_path), overrides)
+        return cls._from_schema(
+            agent_config_schema,
+            base_path=config_path.parent,
+            overrides=overrides,
+            options=options,
+        )
+
+    @classmethod
+    def from_dict(
+        cls,
+        config: dict[str, Any],
+        base_path: Path,
+        overrides: dict[str, Any] | None = None,
+        options: AgentConfigLoadOptions | None = None,
+    ) -> AgentConfig:
+        """Load an AgentConfig from an already parsed config dictionary."""
+        if overrides:
+            warnings.warn(
+                "Overrides will be removed in the v0.4.0, instead use agent_config = "
+                "AgentConfig.from_yaml(...) then agent_config.key = value for "
+                "overrides.",
+                DeprecationWarning,
+                stacklevel=2,
+            )
+            from .schema import apply_agent_name_overrides_to_dict
+
+            config = apply_agent_name_overrides_to_dict(config, overrides)
+
+        try:
+            agent_config_schema = AgentConfigSchema.model_validate(config)
+        except ValidationError as exc:
+            raise ConfigError(f"Invalid agent configuration: {exc}") from exc
+        return cls._from_schema(
+            agent_config_schema,
+            base_path=base_path,
+            overrides=overrides,
+            options=options,
+        )
+
+    @classmethod
+    def _from_schema(
+        cls,
+        agent_config_schema: AgentConfigSchema,
+        *,
+        base_path: Path,
+        overrides: dict[str, Any] | None,
+        options: AgentConfigLoadOptions | None,
+    ) -> AgentConfig:
         effective_options = options or AgentConfigLoadOptions()
 
-        agent_config_schema = AgentConfigSchema.from_yaml(str(config_path), overrides)
+        config_dict = agent_config_schema.model_dump(
+            mode="python",
+            by_alias=True,
+            exclude_none=True,
+        )
+        if effective_options.expand_plugins:
+            from nexau.archs.main_sub.plugin import PluginAdapter, PluginConfigError
+
+            try:
+                config_dict = PluginAdapter(
+                    config_dict,
+                    agent_base_path=base_path,
+                    strict=effective_options.strict,
+                ).expand()
+            except PluginConfigError as exc:
+                raise ConfigError(str(exc)) from exc
+        else:
+            ignored_plugins = config_dict.pop("plugins", [])
+            if ignored_plugins:
+                logger.info("sub_agent_load plugins_ignored=%d", len(ignored_plugins))
 
         agent_builder = AgentConfigBuilder(
-            agent_config_schema.model_dump(
-                mode="python",
-                by_alias=True,
-                exclude_none=True,
-            ),
-            config_path.parent,
+            config_dict,
+            base_path,
             strict=effective_options.strict,
         )
         agent_config = (
@@ -391,7 +455,7 @@ class AgentConfigBuilder:
         Args:
             config: The agent configuration dictionary
             base_path: Base path for resolving relative paths
-            strict: If True (default), raise ConfigError on component load failures;
+            strict: If True, raise ConfigError on component load failures;
                     if False, log a warning and skip the failed component.
         """
         self.config: dict[str, Any] = config
@@ -399,7 +463,7 @@ class AgentConfigBuilder:
         self.strict: bool = strict
         self.agent_params: dict[str, Any] = {}
         self.overrides: dict[str, Any] | None = None
-        self._skipped_components: list[str] = []
+        self._skipped_components: list[str] = list(cast(list[str], config.pop("_skipped_components", [])))
 
     def _handle_component_error(self, msg: str, error: Exception | None = None) -> None:
         """Handle a component loading error according to the strict mode.
@@ -499,6 +563,7 @@ class AgentConfigBuilder:
             Self for method chaining
         """
         self.agent_params["name"] = self.config.get("name", "configured_agent")
+        self.agent_params["source_id"] = self.config.get("source_id")
         self.agent_params["max_context_tokens"] = self.config.get(
             "max_context_tokens",
             128000,
@@ -513,6 +578,7 @@ class AgentConfigBuilder:
             "system_prompt_type",
             "string",
         )
+        self.agent_params["system_prompt_suffix"] = self.config.get("system_prompt_suffix")
         self.agent_params["initial_context"] = self.config.get("context", {})
 
         self.agent_params["stop_tools"] = set(self.config.get("stop_tools", []))
@@ -550,6 +616,9 @@ class AgentConfigBuilder:
                 raise ConfigError(
                     f"MCP server configuration {i} missing 'name' field",
                 )
+            server_name = str(server_config_typed["name"])
+            if not isinstance(server_config_typed.get("source_id"), str):
+                server_config_typed["source_id"] = f"local:mcp_server:{server_name}"
 
             if "type" not in server_config_typed:
                 raise ConfigError(
@@ -585,7 +654,7 @@ class AgentConfigBuilder:
         Returns:
             Self for method chaining
         """
-        middlewares: list[Callable[..., Any]] | None = None
+        middlewares: list[Any] | None = None
         if "middlewares" in self.config:
             middleware_configs = self.config["middlewares"]
             middlewares = []
@@ -600,11 +669,19 @@ class AgentConfigBuilder:
                     if not isinstance(middleware_config, (str, dict)) and not callable(middleware_config):
                         raise ConfigError(f"Middleware {i} must be a string, dict, or callable")
                     middleware = self._import_and_instantiate(cast(HookConfig, middleware_config))
+                    middleware_dict = cast(dict[str, Any], middleware_config) if isinstance(middleware_config, dict) else None
+                    if middleware_dict is not None and isinstance(middleware_dict.get("source_id"), str):
+                        from nexau.archs.main_sub.execution.hooks import Middleware
+
+                        if not isinstance(middleware, Middleware):
+                            raise ConfigError(
+                                f"Middleware {i} with source_id must be an instance of Middleware",
+                            )
+                        middleware.source_id = middleware_dict["source_id"]
                     middlewares.append(middleware)
                 except Exception as e:
                     msg = f"Skipped middleware {i}: {e}"
-                    logger.warning(msg)
-                    self._skipped_components.append(msg)
+                    self._handle_component_error(msg, e)
 
         self.agent_params["middlewares"] = middlewares
 
@@ -627,8 +704,7 @@ class AgentConfigBuilder:
                     after_model_hooks.append(hook_func)
                 except Exception as e:
                     msg = f"Skipped after_model_hook {i}: {e}"
-                    logger.warning(msg)
-                    self._skipped_components.append(msg)
+                    self._handle_component_error(msg, e)
 
         self.agent_params["after_model_hooks"] = after_model_hooks
 
@@ -651,8 +727,7 @@ class AgentConfigBuilder:
                     after_tool_hooks.append(hook_func)
                 except Exception as e:
                     msg = f"Skipped after_tool_hook {i}: {e}"
-                    logger.warning(msg)
-                    self._skipped_components.append(msg)
+                    self._handle_component_error(msg, e)
 
         self.agent_params["after_tool_hooks"] = after_tool_hooks
 
@@ -675,8 +750,7 @@ class AgentConfigBuilder:
                     before_model_hooks.append(hook_func)
                 except Exception as e:
                     msg = f"Skipped before_model_hook {i}: {e}"
-                    logger.warning(msg)
-                    self._skipped_components.append(msg)
+                    self._handle_component_error(msg, e)
 
         self.agent_params["before_model_hooks"] = before_model_hooks
 
@@ -699,8 +773,7 @@ class AgentConfigBuilder:
                     before_tool_hooks.append(hook_func)
                 except Exception as e:
                     msg = f"Skipped before_tool_hook {i}: {e}"
-                    logger.warning(msg)
-                    self._skipped_components.append(msg)
+                    self._handle_component_error(msg, e)
 
         self.agent_params["before_tool_hooks"] = before_tool_hooks
 
@@ -779,14 +852,32 @@ class AgentConfigBuilder:
         skills: list[Skill] = []
 
         # build skills from skill folders
-        skill_configs = self.config.get("skills", [])
-        for skill_folder in skill_configs:
+        skill_configs_raw: object = self.config.get("skills", [])
+        skill_configs = cast(list[object], skill_configs_raw) if isinstance(skill_configs_raw, list) else []
+        seen_skill_names: dict[str, str | None] = {}
+        for skill_config in skill_configs:
             try:
-                skill_folder = _resolve_config_path(str(skill_folder), self.base_path)
+                configured_name: str | None = None
+                source_id: str | None = None
+                if isinstance(skill_config, dict):
+                    skill_config_dict = cast(dict[str, Any], skill_config)
+                    configured_name = cast(str | None, skill_config_dict.get("name"))
+                    source_id = cast(str | None, skill_config_dict.get("source_id"))
+                    skill_folder_raw = str(skill_config_dict["path"])
+                else:
+                    skill_folder_raw = str(skill_config)
+                skill_folder = _resolve_config_path(skill_folder_raw, self.base_path)
                 skill = Skill.from_folder(skill_folder)
+                if configured_name:
+                    skill.name = configured_name
+                skill.source_id = source_id or f"local:skill:{skill.name}"
+                previous_source = seen_skill_names.get(skill.name)
+                if previous_source is not None:
+                    raise ConfigError(f"Skill name conflict for '{skill.name}' between {previous_source} and {skill.source_id}")
+                seen_skill_names[skill.name] = skill.source_id
                 skills.append(skill)
             except Exception as e:
-                self._handle_component_error(f"Skipped skill '{skill_folder}': {e}", e)
+                self._handle_component_error(f"Skipped skill '{skill_config}': {e}", e)
 
         # add tool-based skills
         tool_call_mode = self.agent_params.get(
@@ -806,11 +897,35 @@ class AgentConfigBuilder:
         Returns:
             Self for method chaining
         """
+        from nexau.archs.main_sub.config.expanded import ExpandedSubAgentConfig
+
         sub_agents: dict[str, AgentConfig] = {}
-        sub_agent_configs = self.config.get("sub_agents", [])
+        sub_agent_configs_raw: object = self.config.get("sub_agents", [])
+        if not isinstance(sub_agent_configs_raw, list):
+            raise ConfigError("'sub_agents' must be a list")
+        sub_agent_configs = cast(list[object], sub_agent_configs_raw)
         for sub_config in sub_agent_configs:
             try:
-                sub_agent_name = sub_config.get("name", None)
+                sub_agent_name: str | None
+                sub_agent_source_id: str | None
+                sub_agent_config_path_raw: str | None
+                inline_config: dict[str, Any] | None
+                inline_base_path: Path | None
+                if isinstance(sub_config, ExpandedSubAgentConfig):
+                    sub_agent_name = sub_config.name
+                    sub_agent_source_id = sub_config.source_id
+                    sub_agent_config_path_raw = sub_config.config_path
+                    inline_config = sub_config.inline_config
+                    inline_base_path = sub_config.inline_base_path
+                elif isinstance(sub_config, dict):
+                    sub_config_dict = cast(dict[str, Any], sub_config)
+                    sub_agent_name = cast(str | None, sub_config_dict.get("name"))
+                    sub_agent_source_id = cast(str | None, sub_config_dict.get("source_id"))
+                    sub_agent_config_path_raw = cast(str | None, sub_config_dict.get("config_path"))
+                    inline_config = None
+                    inline_base_path = None
+                else:
+                    raise ConfigError("Sub-agent configuration must be a mapping")
 
                 overrides: dict[str, Any] | None = None
                 if self.overrides:
@@ -818,21 +933,49 @@ class AgentConfigBuilder:
                     if sub_agent_name:
                         overrides["name"] = sub_agent_name
 
-                sub_agent_config_path_raw = sub_config.get("config_path", None)
                 if not isinstance(sub_agent_config_path_raw, str) or not sub_agent_config_path_raw:
                     raise ConfigError("Sub-agent configuration missing 'config_path' field")
 
-                config_path_cm = _resolve_config_resource(sub_agent_config_path_raw, self.base_path)
-                with config_path_cm as config_path:
-                    sub_agent_config = AgentConfig.from_yaml(config_path, overrides)
+                if inline_config is not None and inline_base_path is not None:
+                    sub_agent_config = AgentConfig.from_dict(
+                        inline_config,
+                        inline_base_path,
+                        overrides,
+                        options=AgentConfigLoadOptions(strict=self.strict, expand_plugins=False),
+                    )
+                else:
+                    config_path_cm = _resolve_config_resource(sub_agent_config_path_raw, self.base_path)
+                    with config_path_cm as config_path:
+                        sub_agent_config = AgentConfig.from_yaml(
+                            config_path,
+                            overrides,
+                            options=AgentConfigLoadOptions(strict=self.strict, expand_plugins=False),
+                        )
 
                 if sub_agent_config.name is None:
                     raise ConfigError(
                         "Sub-agent configuration must have a name",
                     )
-                sub_agents[sub_agent_config.name] = sub_agent_config
+                if sub_agent_name:
+                    sub_agent_config.name = sub_agent_name
+                if sub_agent_source_id:
+                    sub_agent_config.source_id = sub_agent_source_id
+                elif sub_agent_config.source_id is None:
+                    sub_agent_config.source_id = f"local:sub_agent:{sub_agent_config.name}"
+                sub_agent_name_final = sub_agent_config.name
+                if sub_agent_name_final in sub_agents:
+                    existing_source = sub_agents[sub_agent_name_final].source_id
+                    raise ConfigError(
+                        f"Sub-agent name conflict for '{sub_agent_name_final}' between {existing_source} and {sub_agent_config.source_id}",
+                    )
+                sub_agents[sub_agent_name_final] = sub_agent_config
             except Exception as e:
-                sub_name = cast(dict[str, str], sub_config).get("name", "unknown") if isinstance(sub_config, dict) else "unknown"
+                if isinstance(sub_config, ExpandedSubAgentConfig):
+                    sub_name = sub_config.name
+                elif isinstance(sub_config, dict):
+                    sub_name = str(cast(dict[str, object], sub_config).get("name", "unknown"))
+                else:
+                    sub_name = "unknown"
                 self._handle_component_error(f"Skipped sub-agent '{sub_name}': {e}", e)
 
         self.agent_params["sub_agents"] = sub_agents
@@ -1031,6 +1174,7 @@ class AgentConfigBuilder:
 
         yaml_path = tool_config.get("yaml_path")
         binding = tool_config.get("binding", None)
+        source_id = tool_config.get("source_id") if isinstance(tool_config.get("source_id"), str) else f"local:tool:{name}"
         lazy_raw: object = tool_config.get("lazy", False)
         if not isinstance(lazy_raw, bool):
             raise ConfigError(f"Tool '{name}' field 'lazy' must be a boolean")
@@ -1067,7 +1211,7 @@ class AgentConfigBuilder:
         yaml_path = str(_resolve_config_path(yaml_path, base_path))
 
         # Create tool with effective config-level overrides
-        return Tool.from_yaml(
+        tool = Tool.from_yaml(
             str(yaml_path),
             binding,
             as_skill=as_skill,
@@ -1076,4 +1220,13 @@ class AgentConfigBuilder:
             name=name,
             defer_loading=defer_loading,
             permissions=permissions,
+            source_id=source_id,
         )
+        schema_properties_raw: object = tool.input_schema.get("properties", {})
+        schema_properties = cast(dict[str, Any], schema_properties_raw) if isinstance(schema_properties_raw, dict) else {}
+        schema_conflicts = set(extra_kwargs) & set(schema_properties)
+        if schema_conflicts:
+            raise ConfigError(
+                f"Tool '{name}' extra_kwargs conflicts with input_schema keys: {sorted(schema_conflicts)}",
+            )
+        return tool

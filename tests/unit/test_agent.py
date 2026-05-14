@@ -1029,6 +1029,9 @@ class TestAgent:
                 def set_outputs(self, outputs):
                     self.outputs = outputs
 
+                def set_attributes(self, attributes):
+                    self.attributes.update(attributes)
+
             ctx_holder: dict[str, DummyTraceContext] = {}
 
             def ctx_factory(tracer_arg, span_name, span_type, inputs, attributes):
@@ -1089,6 +1092,9 @@ class TestAgent:
 
                 def set_outputs(self, outputs):
                     self.outputs = outputs
+
+                def set_attributes(self, attributes):
+                    self.attributes.update(attributes)
 
             ctx_holder: dict[str, DummyTraceContext] = {}
 

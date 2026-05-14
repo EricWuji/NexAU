@@ -111,6 +111,8 @@ class SubAgentManager:
 
         sub_agent_config = self.sub_agents[sub_agent_name]
         caller_sandbox_manager = parent_agent_state.sandbox_manager if parent_agent_state is not None else None
+        if parent_agent_state is not None:
+            parent_agent_state.record_source_id(sub_agent_config.source_id)
 
         # Recall existing sub-agent by ID (will restore history from agent_repo)
         # 防御性检查：空字符串视为 None（创建新子代理）
@@ -261,6 +263,8 @@ class SubAgentManager:
 
         sub_agent_config = self.sub_agents[sub_agent_name]
         caller_sandbox_manager = parent_agent_state.sandbox_manager if parent_agent_state is not None else None
+        if parent_agent_state is not None:
+            parent_agent_state.record_source_id(sub_agent_config.source_id)
 
         # 防御性检查：空字符串视为 None（创建新子代理，自动生成 ID）
         if not sub_agent_id:

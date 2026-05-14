@@ -197,6 +197,7 @@ class TestSubAgentManager:
     ):
         """Test sub-agent call with parent agent state."""
         mock_get_context.return_value = None
+        subagent_manager.sub_agents["test_sub_agent"].source_id = "plugin:north.customer-service:sub_agent:test_sub_agent"
 
         with patch("nexau.archs.main_sub.agent.Agent") as mock_agent_cls:
             mock_agent_cls.return_value = mock_sub_agent
@@ -210,6 +211,7 @@ class TestSubAgentManager:
         assert "sub agent result" in result
         call_args = mock_sub_agent.run.call_args
         assert call_args[1]["parent_agent_state"] == agent_state
+        assert agent_state.plugin_sources == {"plugin:north.customer-service:sub_agent:test_sub_agent"}
 
     @patch("nexau.archs.main_sub.agent_context.get_context")
     def test_call_sub_agent_uses_caller_sandbox_manager(

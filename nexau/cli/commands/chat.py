@@ -9,7 +9,7 @@ from pathlib import Path
 
 from nexau import Agent
 from nexau.archs.main_sub.config import ConfigError
-from nexau.archs.main_sub.config.config import AgentConfigBuilder
+from nexau.archs.main_sub.config.config import AgentConfig
 from nexau.archs.main_sub.utils import load_yaml_with_vars
 from nexau.archs.session import SessionManager, SQLDatabaseEngine
 from nexau.cli.agent_runner import create_cli_progress_hook, create_cli_tool_hook
@@ -72,20 +72,7 @@ def build_agent(config_path: Path, session_manager: SessionManager, user_id: str
         config_dict = load_yaml_with_vars(config_path)
         if not isinstance(config_dict, dict):
             raise ConfigError(f"Configuration file must be a YAML object/mapping, got {type(config_dict).__name__}")
-        agent_config = (
-            AgentConfigBuilder(config_dict, base_path=config_path.parent)
-            .build_core_properties()
-            .build_llm_config()
-            .build_mcp_servers()
-            .build_hooks()
-            .build_tracers()
-            .build_tools()
-            .build_sub_agents()
-            .build_skills()
-            .build_system_prompt_path()
-            .build_sandbox()
-            .get_agent_config()
-        )
+        agent_config = AgentConfig.from_yaml(config_path)
 
         # Create agent with session support
         return Agent(

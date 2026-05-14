@@ -634,6 +634,7 @@ class MCPServerConfig:
     timeout: float | None = 30
     # disable parallel
     disable_parallel: bool = False
+    source_id: str | None = None
     # RFC-0019: server 级默认权限（None = auto-allow，向后兼容）
     permissions: dict[str, list[str]] | None = None
     # RFC-0019: per-tool 权限覆盖（key=原始工具名，None 值 = auto-allow）
@@ -679,6 +680,7 @@ class MCPTool(Tool):
             input_schema=mcp_tool.inputSchema,
             implementation=self._sync_executor,
             disable_parallel=server_config.disable_parallel if server_config else False,
+            source_id=server_config.source_id if server_config else None,
         )
 
         # RFC-0019: 权限优先级 tool_permissions > server permissions > None (auto-allow)
@@ -1456,6 +1458,7 @@ class MCPManager:
         headers: dict[str, str] | None = None,
         timeout: float | None = None,
         disable_parallel: bool = False,
+        source_id: str | None = None,
         permissions: dict[str, list[str]] | None = None,
         tool_permissions: dict[str, dict[str, list[str]] | None] | None = None,
     ) -> None:
@@ -1470,6 +1473,7 @@ class MCPManager:
             headers=headers,
             timeout=timeout,
             disable_parallel=disable_parallel,
+            source_id=source_id,
             permissions=permissions,
             tool_permissions=tool_permissions,
         )
@@ -1584,6 +1588,7 @@ async def initialize_mcp_tools(server_configs: list[dict[str, Any]]) -> Sequence
             headers=config.get("headers"),
             timeout=config.get("timeout"),
             disable_parallel=config.get("disable_parallel", False),
+            source_id=config.get("source_id"),
             permissions=config.get("permissions"),
             tool_permissions=config.get("tool_permissions"),
         )

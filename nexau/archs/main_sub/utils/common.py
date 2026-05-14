@@ -1,6 +1,9 @@
+import hashlib
 import importlib
+import importlib.util
 import os
 import re
+import sys
 from typing import Any, cast
 
 import yaml
@@ -31,16 +34,34 @@ def import_from_string(import_string: str) -> Any:
 
         module_path, attr_name = import_string.rsplit(":", 1)
 
-        # Import the module
-        module = importlib.import_module(module_path)
+        module_file = os.path.expanduser(module_path)
+        if module_file.endswith(".py") or os.path.sep in module_file:
+            module_file = os.path.abspath(module_file)
+            if not os.path.exists(module_file):
+                raise ImportError(f"Python file '{module_file}' does not exist")
+            module_name = f"_nexau_dynamic_{hashlib.sha1(module_file.encode('utf-8')).hexdigest()}"
+            spec = importlib.util.spec_from_file_location(module_name, module_file)
+            if spec is None or spec.loader is None:
+                raise ImportError(f"Could not load Python file '{module_file}'")
+            module = importlib.util.module_from_spec(spec)
+            sys.modules[module_name] = module
+            spec.loader.exec_module(module)
+        else:
+            module = importlib.import_module(module_path)
 
-        # Get the attribute
-        if not hasattr(module, attr_name):
-            raise AttributeError(
-                f"Module '{module_path}' has no attribute '{attr_name}'",
-            )
-
-        return getattr(module, attr_name)
+        missing = object()
+        attribute = module.__dict__.get(attr_name, missing)
+        if attribute is not missing:
+            return attribute
+        module_getattr = module.__dict__.get("__getattr__")
+        if callable(module_getattr):
+            try:
+                return module_getattr(attr_name)
+            except AttributeError:
+                pass
+        raise AttributeError(
+            f"Module '{module_path}' has no attribute '{attr_name}'",
+        )
 
     except ImportError as e:
         raise ConfigError(
@@ -54,11 +75,8 @@ def import_from_string(import_string: str) -> Any:
         raise ConfigError(f"Error importing from '{import_string}': {e}")
 
 
-def load_yaml_with_vars(path: str | os.PathLike[str]) -> YamlValue:
-    with open(path, encoding="utf-8") as f:
-        config_text = f.read()
-
-    base_dir = os.path.dirname(os.path.abspath(path))
+def load_yaml_text_with_vars(config_text: str, base_dir: str | os.PathLike[str]) -> YamlValue:
+    base_dir = os.path.abspath(os.fspath(base_dir))
     yaml_safe_base_dir = base_dir.replace("\\", "/") if os.name == "nt" else base_dir
     config_text = config_text.replace("${this_file_dir}", yaml_safe_base_dir)
 
@@ -110,3 +128,11 @@ def load_yaml_with_vars(path: str | os.PathLike[str]) -> YamlValue:
     if isinstance(resolved_config, dict):
         resolved_config.pop("variables", None)
     return resolved_config
+
+
+def load_yaml_with_vars(path: str | os.PathLike[str]) -> YamlValue:
+    with open(path, encoding="utf-8") as f:
+        config_text = f.read()
+
+    base_dir = os.path.dirname(os.path.abspath(path))
+    return load_yaml_text_with_vars(config_text, base_dir)

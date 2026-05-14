@@ -28,11 +28,14 @@ class AgentConfigLoadOptions(BaseModel):
     Attributes:
         strict: If True (default), raise ConfigError when resource path resolution
                 fails; if False, log a warning and skip the failed component.
+        expand_plugins: If True (default), expand top-level plugin entries; sub-agent
+                loading sets this to False so nested plugins are ignored.
     """
 
     model_config = ConfigDict(extra="forbid")
 
     strict: bool = True
+    expand_plugins: bool = True
 
 
 class HookImportConfig(BaseModel):
@@ -60,6 +63,7 @@ class AgentConfigBase[TTool, TSkill, TSubAgent, THook](BaseModel):
     type: Literal["agent"] | None = Field(default=None)
     name: str | None = None
     description: str | None = None
+    source_id: str | None = None
     system_prompt: str | list[str | SystemPromptBlock] | None = None
     system_prompt_type: Literal["string", "file", "jinja"] = "string"
     system_prompt_suffix: str | None = None

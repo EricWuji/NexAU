@@ -34,6 +34,17 @@ class ToolConfigEntry(BaseModel):
     as_skill: bool = False
     defer_loading: bool = False
     extra_kwargs: dict[str, Any] = Field(default_factory=dict)
+    source_id: str | None = None
+
+
+class SkillConfigEntry(BaseModel):
+    """Schema for skill folder entries in agent configuration."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    name: str | None = None
+    path: str
+    source_id: str | None = None
 
 
 class SubAgentConfigEntry(BaseModel):
@@ -42,6 +53,7 @@ class SubAgentConfigEntry(BaseModel):
     model_config = ConfigDict(extra="forbid")
     name: str
     config_path: str
+    source_id: str | None = None
 
 
 class MCPServerBaseModel(BaseModel):
@@ -50,6 +62,7 @@ class MCPServerBaseModel(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     name: str
+    source_id: str | None = None
     timeout: int | None = Field(default=None, gt=0)
     env: dict[str, str] | None = None
     disable_parallel: bool = False
@@ -80,6 +93,15 @@ class MCPSseServer(MCPServerBaseModel):
 MCPServerConfig = MCPStdIOServer | MCPHttpServer | MCPSseServer
 
 
+class PluginEntryConfig(BaseModel):
+    """Schema for top-level plugin enablement entries."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    use: str
+    config: dict[str, Any] = Field(default_factory=dict)
+
+
 def _empty_mcp_server_list() -> list[MCPServerConfig]:
     return []
 
@@ -88,8 +110,12 @@ def _empty_hook_list() -> list[HookDefinition]:
     return []
 
 
+def _empty_plugin_entry_list() -> list[PluginEntryConfig]:
+    return []
+
+
 class AgentConfigSchema(
-    AgentConfigBase[ToolConfigEntry, str, list[SubAgentConfigEntry], HookDefinition],
+    AgentConfigBase[ToolConfigEntry, str | SkillConfigEntry, list[SubAgentConfigEntry], HookDefinition],
 ):
     """Top-level schema for agent YAML files."""
 
@@ -104,6 +130,7 @@ class AgentConfigSchema(
     middlewares: list[HookDefinition] | None = None
     token_counter: HookDefinition | None = None
     tracers: list[HookDefinition] = Field(default_factory=_empty_hook_list)
+    plugins: list[PluginEntryConfig] = Field(default_factory=_empty_plugin_entry_list)
 
     @model_validator(mode="after")
     def _require_llm_config(self) -> "AgentConfigSchema":  # type: ignore[override]
@@ -139,7 +166,7 @@ class AgentConfigSchema(
                     DeprecationWarning,
                     stacklevel=2,
                 )
-                config = apply_agent_name_overrides(config, overrides)  # type: ignore[reportDeprecated]
+                config = apply_agent_name_overrides_to_dict(config, overrides)
 
             try:
                 return cls.model_validate(config)
@@ -175,6 +202,14 @@ def apply_agent_name_overrides(
     Returns:
         Updated configuration with overrides applied
     """
+    return apply_agent_name_overrides_to_dict(config, overrides)
+
+
+def apply_agent_name_overrides_to_dict(
+    config: dict[str, Any],
+    overrides: dict[str, Any],
+) -> dict[str, Any]:
+    """Apply overrides based on agent names without emitting deprecation diagnostics."""
     # Make a copy to avoid modifying the original
     config = config.copy()
 

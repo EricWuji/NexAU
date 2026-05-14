@@ -97,6 +97,12 @@ class AgentState:
         # AgentState is on the deprecation path; new fields go to
         # FrameworkContext. Sub-agent inheritance is now explicit via
         # ``call_sub_agent(trace_id=...)`` rather than via this backref.
+        self.plugin_sources: set[str] = set()
+
+    def record_source_id(self, source_id: str | None) -> None:
+        """Record a plugin source_id used during this run for agent-span metadata."""
+        if source_id and source_id.startswith("plugin:"):
+            self.plugin_sources.add(source_id)
 
     @property
     def subagent_manager(self) -> Optional["SubAgentManager"]:

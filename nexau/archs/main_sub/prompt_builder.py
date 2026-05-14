@@ -160,7 +160,9 @@ class PromptBuilder:
 
         if not agent_config.system_prompt:
             agent_name = agent_config.name or "agent"
-            return [SystemPromptPart(text=self._get_default_system_prompt(agent_name))]
+            default_parts = [SystemPromptPart(text=self._get_default_system_prompt(agent_name))]
+            self._append_suffix_and_nexau_md(default_parts, agent_config, runtime_context)
+            return default_parts
 
         try:
             context = self._build_template_context(runtime_context)

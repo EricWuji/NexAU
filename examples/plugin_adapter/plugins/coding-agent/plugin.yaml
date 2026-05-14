@@ -1,0 +1,112 @@
+type: plugin
+name: example.coding-agent
+version: 0.1.0
+description: Local coding agent plugin example.
+engines:
+  nexau: ">=0.4.0,<0.5.0"
+
+config:
+  properties:
+    project_name:
+      type: string
+      required: true
+      description: Repository or product name shown in coding context.
+    default_branch:
+      type: string
+      default: main
+      description: Default branch used in review and implementation guidance.
+    package_manager:
+      type: string
+      enum:
+        - uv
+        - pip
+        - poetry
+        - npm
+        - pnpm
+        - yarn
+      default: uv
+      description: Package manager normally used by the repository.
+    test_command:
+      type: string
+      default: "uv run pytest"
+      description: Default focused test command for verification.
+    llm_model:
+      type: string
+      required: true
+      description: Model used by plugin-contributed sub-agents.
+    llm_base_url:
+      type: string
+      required: true
+      description: Base URL used by plugin-contributed sub-agents.
+    llm_api_key:
+      type: string
+      required: true
+      description: API key used by plugin-contributed sub-agents.
+    llm_api_type:
+      type: string
+      required: true
+      description: API type used by plugin-contributed sub-agents.
+
+system_prompt_fragment: >-
+  Read the relevant code before editing, keep changes scoped, and verify
+  behavior with focused tests.
+
+contributes:
+  mcp_servers:
+    - name: coding_repo_context
+      type: stdio
+      command: python
+      args:
+        - "${plugin.dir}/mcp/repo_context_server.py"
+      env:
+        CODING_AGENT_PROJECT_NAME: ${config.project_name}
+        CODING_AGENT_DEFAULT_BRANCH: ${config.default_branch}
+        CODING_AGENT_PACKAGE_MANAGER: ${config.package_manager}
+        CODING_AGENT_TEST_COMMAND: ${config.test_command}
+      timeout: 30
+
+  tools:
+    - name: read_file
+      yaml_path: "${plugin.dir}/tools/read_file.tool.yaml"
+      binding: nexau.archs.tool.builtin.file_tools:read_file
+    - name: search_file_content
+      yaml_path: "${plugin.dir}/tools/search_file_content.tool.yaml"
+      binding: nexau.archs.tool.builtin.file_tools:search_file_content
+    - name: list_directory
+      yaml_path: "${plugin.dir}/tools/list_directory.tool.yaml"
+      binding: nexau.archs.tool.builtin.file_tools:list_directory
+    - name: run_shell_command
+      yaml_path: "${plugin.dir}/tools/run_shell_command.tool.yaml"
+      binding: nexau.archs.tool.builtin.shell_tools:run_shell_command
+    - name: apply_patch
+      yaml_path: "${plugin.dir}/tools/apply_patch.tool.yaml"
+      binding: nexau.archs.tool.builtin.file_tools.apply_patch:apply_patch
+    - name: replace
+      yaml_path: "${plugin.dir}/tools/replace.tool.yaml"
+      binding: nexau.archs.tool.builtin.file_tools:replace
+    - name: write_todos
+      yaml_path: "${plugin.dir}/tools/write_todos.tool.yaml"
+      binding: nexau.archs.tool.builtin.session_tools:write_todos
+
+  skills:
+    - name: coding-prompt-fragment
+      path: skills/coding-prompt-fragment
+    - name: development-workflow
+      path: skills/development-workflow
+    - name: test-debug-loop
+      path: skills/test-debug-loop
+
+  sub_agents:
+    - name: explore
+      config_path: sub_agents/explore.yaml
+    - name: worker
+      config_path: sub_agents/worker.yaml
+
+  middlewares:
+    - name: coding_context
+      import: ./middleware.py:CodingContextMiddleware
+      params:
+        project_name: ${config.project_name}
+        default_branch: ${config.default_branch}
+        package_manager: ${config.package_manager}
+        test_command: ${config.test_command}

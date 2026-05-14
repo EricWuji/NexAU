@@ -141,6 +141,30 @@ class TestToolExecutorExecution:
         assert "result" in result
         assert "Processed: test" in str(result)
 
+    def test_execute_tool_records_plugin_source_id(self, agent_state):
+        """Plugin tool source IDs are accumulated for the parent agent span."""
+
+        tool = Tool(
+            name="plugin_tool",
+            description="Plugin tool",
+            input_schema={"type": "object", "properties": {}},
+            implementation=lambda: {"ok": True},
+            source_id="plugin:north.customer-service:tool:plugin_tool",
+        )
+        executor = ToolExecutor(
+            tool_registry=make_tool_registry({"plugin_tool": tool}),
+            stop_tools=set(),
+        )
+
+        executor.execute_tool(
+            agent_state=agent_state,
+            tool_name="plugin_tool",
+            parameters={},
+            tool_call_id="call_plugin",
+        )
+
+        assert agent_state.plugin_sources == {"plugin:north.customer-service:tool:plugin_tool"}
+
     def test_load_skill_does_not_start_sandbox(self, global_storage, agent_context):
         """LoadSkill should use the in-memory registry without booting the sandbox."""
         sandbox_manager = Mock()

@@ -1,0 +1,38 @@
+type: agent
+name: worker
+description: Implement scoped code changes and verify them with focused tests.
+system_prompt: |
+  You are the worker sub-agent for ${config.project_name}.
+  Read the relevant code before editing, keep changes scoped, and verify behavior with focused tests.
+
+  Work on one bounded implementation task at a time. Prefer `apply_patch` for
+  edits, run `${config.test_command}` or a narrower targeted command when
+  practical, and report changed files plus verification results.
+llm_config:
+  model: ${config.llm_model}
+  base_url: ${config.llm_base_url}
+  api_key: ${config.llm_api_key}
+  api_type: ${config.llm_api_type}
+tool_call_mode: structured
+tools:
+  - name: read_file
+    yaml_path: ../tools/read_file.tool.yaml
+    binding: nexau.archs.tool.builtin.file_tools:read_file
+  - name: search_file_content
+    yaml_path: ../tools/search_file_content.tool.yaml
+    binding: nexau.archs.tool.builtin.file_tools:search_file_content
+  - name: list_directory
+    yaml_path: ../tools/list_directory.tool.yaml
+    binding: nexau.archs.tool.builtin.file_tools:list_directory
+  - name: apply_patch
+    yaml_path: ../tools/apply_patch.tool.yaml
+    binding: nexau.archs.tool.builtin.file_tools.apply_patch:apply_patch
+  - name: replace
+    yaml_path: ../tools/replace.tool.yaml
+    binding: nexau.archs.tool.builtin.file_tools:replace
+  - name: run_shell_command
+    yaml_path: ../tools/run_shell_command.tool.yaml
+    binding: nexau.archs.tool.builtin.shell_tools:run_shell_command
+  - name: write_todos
+    yaml_path: ../tools/write_todos.tool.yaml
+    binding: nexau.archs.tool.builtin.session_tools:write_todos

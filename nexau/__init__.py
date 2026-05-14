@@ -27,6 +27,7 @@ if TYPE_CHECKING:
     from .archs.llm.llm_config import LLMConfig
     from .archs.main_sub.agent import Agent
     from .archs.main_sub.config import AgentConfig
+    from .archs.main_sub.plugin.manifest import Plugin
     from .archs.main_sub.skill import Skill
     from .archs.tool.tool import Tool
     from .archs.tracer import BaseTracer, CompositeTracer, Span, SpanType, TraceContext
@@ -36,6 +37,7 @@ __all__ = [
     "Tool",
     "LLMConfig",
     "AgentConfig",
+    "Plugin",
     "Skill",
     # Tracer components
     "BaseTracer",
@@ -70,6 +72,10 @@ def __getattr__(name: str) -> object:
         from .archs.main_sub.config import AgentConfig
 
         return _cache_export(name, AgentConfig)
+    if name == "Plugin":
+        from .archs.main_sub.plugin.manifest import Plugin
+
+        return _cache_export(name, Plugin)
     if name == "Skill":
         from .archs.main_sub.skill import Skill
 

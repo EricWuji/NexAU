@@ -1,0 +1,42 @@
+type: agent
+name: plugin_adapter_coding_agent
+variables:
+  llm_model: ${env.LLM_MODEL}
+  llm_base_url: ${env.LLM_BASE_URL}
+  llm_api_key: ${env.LLM_API_KEY}
+  llm_api_type: ${env.LLM_API_TYPE}
+system_prompt: |
+  You are a pragmatic coding agent for repository maintenance.
+  Use the coding agent plugin for codebase exploration, focused edits, test runs,
+  and implementation planning.
+llm_config:
+  model: ${variables.llm_model}
+  base_url: ${variables.llm_base_url}
+  api_key: ${variables.llm_api_key}
+  api_type: ${variables.llm_api_type}
+tracers:
+  - import: nexau.archs.tracer.adapters.langfuse:LangfuseTracer
+    params:
+      public_key: ${env.LANGFUSE_PUBLIC_KEY}
+      secret_key: ${env.LANGFUSE_SECRET_KEY}
+      host: ${env.LANGFUSE_BASE_URL}
+      tags:
+        - rfc-0024
+        - plugin-adapter
+        - coding-agent-example
+      metadata:
+        example: plugin_adapter
+        plugin: example.coding-agent
+tool_call_mode: structured
+max_iterations: 4
+plugins:
+  - use: "path:./plugins/coding-agent"
+    config:
+      project_name: nexau
+      default_branch: main
+      package_manager: uv
+      test_command: "uv run pytest"
+      llm_model: ${variables.llm_model}
+      llm_base_url: ${variables.llm_base_url}
+      llm_api_key: ${variables.llm_api_key}
+      llm_api_type: ${variables.llm_api_type}

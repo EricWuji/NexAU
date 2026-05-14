@@ -15,12 +15,13 @@
 """Utility modules for the main_sub architecture."""
 
 from .cleanup_manager import CleanupManager
-from .common import import_from_string, load_yaml_with_vars
+from .common import import_from_string, load_yaml_text_with_vars, load_yaml_with_vars
 from .token_counter import TokenCounter
 from .xml_utils import XMLParser, XMLUtils
 
 __all__ = [
     "import_from_string",
+    "load_yaml_text_with_vars",
     "load_yaml_with_vars",
     "TokenCounter",
     "XMLParser",

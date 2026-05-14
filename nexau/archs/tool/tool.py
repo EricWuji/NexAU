@@ -257,10 +257,12 @@ class Tool:
         extra_kwargs: dict[str, Any] | None = None,
         source_name: str | None = None,
         permissions: dict[str, list[str]] | None = None,
+        source_id: str | None = None,
     ):
         """Initialize a tool with schema and implementation."""
         self.name = name
         self.source_name = source_name
+        self.source_id = source_id
         self.description = description
         self.skill_description = skill_description
         self.as_skill = as_skill
@@ -320,6 +322,7 @@ class Tool:
         description_suffix: str = "",
         defer_loading: bool | None = None,
         permissions: dict[str, list[str]] | None = None,
+        source_id: str | None = None,
     ) -> Tool:
         """Load tool definition from YAML file and bind to implementation."""
         path = Path(yaml_path)
@@ -388,6 +391,7 @@ class Tool:
             formatter=formatter,
             extra_kwargs=extra_kwargs,
             permissions=permissions,
+            source_id=source_id,
         )
 
     def resolve_formatter(self) -> ToolFormatter:

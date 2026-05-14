@@ -24,11 +24,12 @@ from nexau.archs.tool import Tool
 
 
 class Skill:
-    def __init__(self, name: str, description: str | None, detail: str | None, folder: str):
+    def __init__(self, name: str, description: str | None, detail: str | None, folder: str, source_id: str | None = None):
         self.name: str = name
         self.description: str | None = description
         self.detail: str | None = detail
         self.folder: str = folder
+        self.source_id: str | None = source_id
 
     @classmethod
     def from_folder(cls, folder: Path) -> Skill:
@@ -179,6 +180,7 @@ def build_tool_skill(tool: Tool, tool_call_mode: str = "xml") -> Skill:
         description=tool.skill_description,
         detail=build_tool_skill_detail(tool, tool_call_mode=tool_call_mode),
         folder="",
+        source_id=tool.source_id,
     )
 
 

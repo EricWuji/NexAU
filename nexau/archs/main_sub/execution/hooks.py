@@ -315,6 +315,8 @@ ToolCallFn = Callable[[ToolCallParams], Any]
 class Middleware:
     """Extensible middleware abstraction for agent execution pipeline."""
 
+    source_id: str | None = None
+
     def before_agent(self, hook_input: BeforeAgentHookInput) -> HookResult:
         return HookResult.no_changes()
 

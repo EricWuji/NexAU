@@ -24,6 +24,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from nexau.archs.main_sub.config import ConfigError as ConfigConfigError
+from nexau.archs.main_sub.config.base import AgentConfigLoadOptions
 from nexau.archs.main_sub.config.config import AgentConfig, AgentConfigBuilder, ExecutionConfig
 from nexau.archs.main_sub.config.schema import (
     AgentConfigSchema,
@@ -287,6 +288,7 @@ class TestAgentConfigBuilderCore:
 
         assert len(builder.agent_params["mcp_servers"]) == 2
         assert builder.agent_params["mcp_servers"][0]["name"] == "stdio"
+        assert builder.agent_params["mcp_servers"][0]["source_id"] == "local:mcp_server:stdio"
         assert builder.agent_params["mcp_servers"][1]["type"] == "http"
 
     def test_build_mcp_servers_rejects_non_list(self, temp_dir):
@@ -326,14 +328,14 @@ class TestAgentConfigBuilderCore:
         with pytest.raises(ConfigConfigError, match="'after_model_hooks' must be a list"):
             builder.build_hooks()
 
-        builder_bad_entry = AgentConfigBuilder({"before_tool_hooks": [123]}, Path(temp_dir))
+        builder_bad_entry = AgentConfigBuilder({"before_tool_hooks": [123]}, Path(temp_dir), strict=False)
         builder_bad_entry.build_hooks()  # should not raise
         assert len(builder_bad_entry._skipped_components) >= 1
         assert any("before_tool_hooks" in msg for msg in builder_bad_entry._skipped_components)
         assert builder_bad_entry.agent_params["before_tool_hooks"] == []
 
     def test_build_hooks_skips_missing_import_field(self, temp_dir):
-        builder = AgentConfigBuilder({"after_tool_hooks": [{"params": {}}]}, Path(temp_dir))
+        builder = AgentConfigBuilder({"after_tool_hooks": [{"params": {}}]}, Path(temp_dir), strict=False)
 
         builder.build_hooks()  # should not raise
         assert len(builder._skipped_components) >= 1
@@ -341,7 +343,7 @@ class TestAgentConfigBuilderCore:
         assert builder.agent_params["after_tool_hooks"] == []
 
     def test_build_hooks_skips_import_errors(self, temp_dir):
-        builder = AgentConfigBuilder({"middlewares": ["nexau.invalid.module:missing"]}, Path(temp_dir))
+        builder = AgentConfigBuilder({"middlewares": ["nexau.invalid.module:missing"]}, Path(temp_dir), strict=False)
 
         builder.build_hooks()  # should not raise
         assert len(builder._skipped_components) >= 1
@@ -351,13 +353,15 @@ class TestAgentConfigBuilderCore:
     def test_build_hooks_skips_bad_params(self, temp_dir):
         hook_dict = {"import": f"{MODULE_PATH}:sample_hook_fn", "params": "oops"}
         builder = AgentConfigBuilder({"after_tool_hooks": [hook_dict]}, Path(temp_dir))
+        with pytest.raises(ConfigConfigError, match="params"):
+            builder.build_hooks()
 
         class NotCallable:
             pass
 
         with patch("nexau.archs.main_sub.config.config.import_from_string", return_value=NotCallable()):
             hook_dict = {"import": "module:obj", "params": {"x": 1}}
-            builder = AgentConfigBuilder({"before_model_hooks": [hook_dict]}, Path(temp_dir))
+            builder = AgentConfigBuilder({"before_model_hooks": [hook_dict]}, Path(temp_dir), strict=False)
 
             builder.build_hooks()  # should not raise
             assert len(builder._skipped_components) >= 1
@@ -381,20 +385,20 @@ class TestAgentConfigBuilderCore:
         with pytest.raises(ConfigConfigError, match="'tracers' must be a list"):
             builder.build_tracers()
 
-        builder_bad = AgentConfigBuilder({"tracers": [123]}, Path(temp_dir))
+        builder_bad = AgentConfigBuilder({"tracers": [123]}, Path(temp_dir), strict=False)
         builder_bad.build_tracers()  # should not raise
         assert len(builder_bad._skipped_components) >= 1
         assert any("Tracer" in msg or "tracer" in msg for msg in builder_bad._skipped_components)
         assert builder_bad.agent_params["tracers"] == []
 
-        builder_not_tracer = AgentConfigBuilder({"tracers": [f"{MODULE_PATH}:sample_hook_fn"]}, Path(temp_dir))
+        builder_not_tracer = AgentConfigBuilder({"tracers": [f"{MODULE_PATH}:sample_hook_fn"]}, Path(temp_dir), strict=False)
         builder_not_tracer.build_tracers()  # should not raise
         assert len(builder_not_tracer._skipped_components) >= 1
         assert any("Tracer" in msg or "tracer" in msg for msg in builder_not_tracer._skipped_components)
         assert builder_not_tracer.agent_params["tracers"] == []
 
     def test_build_tracers_skips_null_entry(self, temp_dir):
-        builder = AgentConfigBuilder({"tracers": [None]}, Path(temp_dir))
+        builder = AgentConfigBuilder({"tracers": [None]}, Path(temp_dir), strict=False)
 
         builder.build_tracers()  # should not raise
         assert len(builder._skipped_components) >= 1
@@ -403,7 +407,7 @@ class TestAgentConfigBuilderCore:
 
     def test_build_tracers_skips_import_errors(self, temp_dir):
         with patch.object(AgentConfigBuilder, "_import_and_instantiate", side_effect=RuntimeError("boom")):
-            builder = AgentConfigBuilder({"tracers": ["module:Tracer"]}, Path(temp_dir))
+            builder = AgentConfigBuilder({"tracers": ["module:Tracer"]}, Path(temp_dir), strict=False)
 
             builder.build_tracers()  # should not raise
             assert len(builder._skipped_components) >= 1
@@ -849,7 +853,11 @@ class TestAgentConfigBuilderCore:
             builder.build_sub_agents()
 
             mock_resolve.assert_called_once_with("my_pkg:agents/sub.yaml", Path(temp_dir))
-            mock_from_yaml.assert_called_once_with(resolved_path, None)
+            mock_from_yaml.assert_called_once_with(
+                resolved_path,
+                None,
+                options=AgentConfigLoadOptions(strict=True, expand_plugins=False),
+            )
             assert "sub" in builder.agent_params["sub_agents"]
 
     def test_build_system_prompt_path_pkg_resource_single(self, temp_dir):
