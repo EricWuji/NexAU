@@ -34,20 +34,57 @@ logger = logging.getLogger(__name__)
 _TTFT_ATTRIBUTE_KEY = "time_to_first_token_ms"
 
 
+# 已知字段名 → Langfuse 标准字段名（覆盖 TokenUsage 内部名 + 各 provider 原始名）
+_TO_LANGFUSE_FIELD: dict[str, str | None] = {
+    # Provider aliases
+    "prompt_tokens": "input_tokens",
+    "output_tokens": "completion_tokens",
+    "cached_tokens": "cache_read_input_tokens",
+    # TokenUsage 内部名
+    "cache_read_tokens": "cache_read_input_tokens",
+    "cache_creation_tokens": "cache_creation_input_tokens",
+    "input_tokens_uncached": None,
+}
+
+
+def _flatten_usage_dict(usage: Mapping[str, object]) -> dict[str, int]:
+    """展开 provider usage dict 中的嵌套 details 字段。
+
+    OpenAI 将 cache/reasoning 数放在 prompt_tokens_details 等子 dict 中。
+    此函数提升嵌套 int 字段到顶层，顶层字段优先。
+    """
+    flat: dict[str, int] = {}
+    for k, v in usage.items():
+        if isinstance(v, int):
+            flat[k] = v
+        elif isinstance(v, Mapping):
+            nested = cast(Mapping[str, object], v)
+            for nested_k, nested_v in nested.items():
+                if isinstance(nested_v, int) and nested_k not in flat:
+                    flat[nested_k] = nested_v
+    return flat
+
+
 def _sanitize_usage(usage: Mapping[str, object] | TokenUsage) -> dict[str, int]:
-    """Sanitize usage data for Langfuse SDK compatibility.
+    """Sanitize and map usage data for Langfuse SDK compatibility.
 
-    Langfuse SDK 的 UsageDetails 类型为 Union[Dict[str, int], OpenAiCompletionUsageSchema, ...]，
-    其中 prompt_tokens_details / completion_tokens_details 声明为 Dict[str, Optional[int]]。
-    某些模型（VertexAI、Azure OpenAI o1 等）返回的 usage 包含非 int 值（如 "modality": "text"）
-    或嵌套 dict，会导致 pydantic 校验失败，整个 generation update 静默丢失。
-    参见: https://github.com/langfuse/langfuse/issues/4961
-
-    此函数只保留值为 int 的顶层字段，丢弃非 int 值。
+    1. 只保留 int 值字段，避免 pydantic 校验失败。
+       参见: https://github.com/langfuse/langfuse/issues/4961
+    2. 展开 provider 嵌套的 details 字段（OpenAI prompt_tokens_details 等）。
+    3. 统一映射字段名为 Langfuse 标准名，确保所有 provider 的
+       cache 命中率在 Langfuse UI 正确显示。
     """
     if isinstance(usage, TokenUsage):
-        return usage.to_dict()
-    return {k: v for k, v in usage.items() if isinstance(v, int)}
+        raw: dict[str, int] = usage.to_dict()
+    else:
+        raw = _flatten_usage_dict(usage)
+
+    result: dict[str, int] = {}
+    for key, value in raw.items():
+        mapped_key = _TO_LANGFUSE_FIELD.get(key, key)
+        if mapped_key is not None and mapped_key not in result:
+            result[mapped_key] = value
+    return result
 
 
 class LangfuseTracer(BaseTracer):

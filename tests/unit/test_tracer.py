@@ -383,24 +383,30 @@ def test_langfuse_tracer_llm_generation_falls_back_to_span():
 
 def test_sanitize_usage_filters_non_int_values():
     """_sanitize_usage should only keep int values, dropping non-int (str, None, dict, etc.)."""
-    # VertexAI 风格: modality 是 str
+    # VertexAI 风格: modality 是 str（prompt_tokens 映射为 input_tokens）
     assert _sanitize_usage({"prompt_tokens": 10, "completion_tokens": 20, "modality": "text"}) == {
-        "prompt_tokens": 10,
+        "input_tokens": 10,
         "completion_tokens": 20,
     }
-    # 嵌套 dict（如 completion_tokens_details: {}）
+    # 嵌套 dict（空 details 不提取任何字段）
     assert _sanitize_usage({"total_tokens": 30, "completion_tokens_details": {}}) == {
         "total_tokens": 30,
     }
     # None 值
     assert _sanitize_usage({"input_tokens": 5, "audio_tokens": None}) == {"input_tokens": 5}
-    # 全是 int: 不丢弃
+    # 全是 int: 未知字段透传
     assert _sanitize_usage({"a": 1, "b": 2}) == {"a": 1, "b": 2}
     # 空 dict
     assert _sanitize_usage({}) == {}
 
 
-def test_sanitize_usage_keeps_aligned_cache_fields():
+def test_sanitize_usage_maps_cache_fields_to_langfuse_names():
+    """TokenUsage cache fields should be mapped to Langfuse-recognized names.
+
+    NAC 内部用 cache_read_tokens / cache_creation_tokens，
+    Langfuse UI 识别 cache_read_input_tokens / cache_creation_input_tokens。
+    input_tokens_uncached 是内部调试字段，不应上报 Langfuse。
+    """
     usage = TokenUsage(
         input_tokens=70,
         completion_tokens=20,
@@ -416,9 +422,90 @@ def test_sanitize_usage_keeps_aligned_cache_fields():
         "completion_tokens": 20,
         "reasoning_tokens": 3,
         "total_tokens": 100,
-        "cache_creation_tokens": 5,
+        "cache_creation_input_tokens": 5,
+        "cache_read_input_tokens": 10,
+    }
+
+
+def test_sanitize_usage_maps_raw_dict_cache_fields():
+    """Raw dict with NAC-style cache fields should also be mapped."""
+    raw = {
+        "input_tokens": 50,
+        "completion_tokens": 30,
+        "total_tokens": 90,
         "cache_read_tokens": 10,
-        "input_tokens_uncached": 70,
+        "cache_creation_tokens": 5,
+        "input_tokens_uncached": 50,
+    }
+    assert _sanitize_usage(raw) == {
+        "input_tokens": 50,
+        "completion_tokens": 30,
+        "total_tokens": 90,
+        "cache_read_input_tokens": 10,
+        "cache_creation_input_tokens": 5,
+    }
+
+
+def test_sanitize_usage_passes_through_unknown_fields():
+    """Unknown int fields should be passed through without mapping."""
+    raw = {"input_tokens": 10, "custom_provider_field": 42}
+    result = _sanitize_usage(raw)
+    assert result == {"input_tokens": 10, "custom_provider_field": 42}
+
+
+def test_sanitize_usage_extracts_openai_nested_cache_fields():
+    """OpenAI ChatCompletion 将 cache/reasoning 嵌套在 details 子 dict 中，应被提取并映射。"""
+    raw: dict[str, object] = {
+        "prompt_tokens": 100,
+        "completion_tokens": 50,
+        "total_tokens": 150,
+        "prompt_tokens_details": {"cached_tokens": 10, "audio_tokens": 0},
+        "completion_tokens_details": {"reasoning_tokens": 5, "audio_tokens": 0},
+    }
+    result = _sanitize_usage(raw)
+    assert result == {
+        "input_tokens": 100,
+        "completion_tokens": 50,
+        "total_tokens": 150,
+        "cache_read_input_tokens": 10,
+        "audio_tokens": 0,
+        "reasoning_tokens": 5,
+    }
+
+
+def test_sanitize_usage_maps_gemini_enriched_usage():
+    """Gemini enriched usage 使用 cached_tokens，应映射为 cache_read_input_tokens。"""
+    raw: dict[str, object] = {
+        "input_tokens": 80,
+        "output_tokens": 40,
+        "total_tokens": 130,
+        "cached_tokens": 15,
+        "reasoning_tokens": 10,
+    }
+    result = _sanitize_usage(raw)
+    assert result == {
+        "input_tokens": 80,
+        "completion_tokens": 40,
+        "total_tokens": 130,
+        "cache_read_input_tokens": 15,
+        "reasoning_tokens": 10,
+    }
+
+
+def test_sanitize_usage_anthropic_raw_response():
+    """Anthropic 原始响应字段名已与 Langfuse 一致，应直接透传。"""
+    raw: dict[str, object] = {
+        "input_tokens": 70,
+        "output_tokens": 30,
+        "cache_read_input_tokens": 10,
+        "cache_creation_input_tokens": 5,
+    }
+    result = _sanitize_usage(raw)
+    assert result == {
+        "input_tokens": 70,
+        "completion_tokens": 30,
+        "cache_read_input_tokens": 10,
+        "cache_creation_input_tokens": 5,
     }
 
 
@@ -442,7 +529,7 @@ def test_langfuse_tracer_end_span_sanitizes_usage():
     vendor_obj = cast(DummyLangfuseObject, span.vendor_obj)
     usage_call = next(call for call in vendor_obj.update_calls if "usage_details" in call)
     assert usage_call["usage_details"] == {
-        "prompt_tokens": 10,
+        "input_tokens": 10,
         "completion_tokens": 20,
         "total_tokens": 30,
     }
