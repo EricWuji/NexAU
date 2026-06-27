@@ -1,0 +1,492 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Trace Visualizer — NexAU</title>
+<style>
+/* ================================================================== */
+/* Reset & Base                                                        */
+/* ================================================================== */
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body {
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  background: #0d1117; color: #c9d1d9; height: 100vh; display: flex; overflow: hidden;
+}
+
+/* ================================================================== */
+/* Sidebar                                                             */
+/* ================================================================== */
+.sidebar {
+  width: 280px; min-width: 280px; background: #161b22; border-right: 1px solid #21262d;
+  display: flex; flex-direction: column; overflow: hidden;
+}
+.sidebar-header {
+  padding: 16px; border-bottom: 1px solid #21262d;
+  font-size: 16px; font-weight: 600; color: #f0f6fc;
+}
+.file-list { flex: 1; overflow-y: auto; padding: 8px; }
+.file-item {
+  padding: 12px; margin-bottom: 4px; border-radius: 6px; cursor: pointer;
+  border: 1px solid transparent; transition: all 0.15s;
+}
+.file-item:hover { background: #1c2129; border-color: #30363d; }
+.file-item.active { background: #1f2937; border-color: #58a6ff; }
+.file-item .name { font-size: 13px; font-weight: 500; color: #e6edf3; word-break: break-all; }
+.file-item .meta { font-size: 11px; color: #8b949e; margin-top: 4px; display: flex; gap: 8px; }
+.file-item .meta span { display: inline-flex; align-items: center; gap: 3px; }
+.type-badge {
+  display: inline-block; padding: 1px 6px; border-radius: 3px; font-size: 10px;
+  font-weight: 600; color: #fff;
+}
+
+/* ================================================================== */
+/* Main content                                                        */
+/* ================================================================== */
+.main {
+  flex: 1; display: flex; flex-direction: column; overflow: hidden;
+}
+.toolbar {
+  padding: 12px 20px; border-bottom: 1px solid #21262d; display: flex;
+  align-items: center; gap: 16px; background: #161b22;
+}
+.toolbar h1 { font-size: 18px; font-weight: 600; color: #f0f6fc; }
+.toolbar .summary { font-size: 12px; color: #8b949e; margin-left: auto; }
+.content {
+  flex: 1; overflow: auto; padding: 20px;
+}
+
+/* ================================================================== */
+/* Summary cards                                                       */
+/* ================================================================== */
+.summary-cards { display: flex; gap: 12px; margin-bottom: 20px; flex-wrap: wrap; }
+.card {
+  background: #161b22; border: 1px solid #21262d; border-radius: 8px;
+  padding: 14px 20px; min-width: 120px;
+}
+.card .label { font-size: 11px; color: #8b949e; text-transform: uppercase; letter-spacing: 0.5px; }
+.card .value { font-size: 22px; font-weight: 700; color: #f0f6fc; margin-top: 4px; }
+
+/* ================================================================== */
+/* Empty state                                                         */
+/* ================================================================== */
+.empty-state {
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  height: 100%; color: #484f58; gap: 12px;
+}
+.empty-state .icon { font-size: 64px; }
+.empty-state .text { font-size: 18px; }
+
+/* ================================================================== */
+/* Trace waterfall                                                     */
+/* ================================================================== */
+.trace-title {
+  font-size: 14px; font-weight: 600; color: #8b949e; margin-bottom: 12px;
+  padding-bottom: 8px; border-bottom: 1px solid #21262d;
+}
+.waterfall { position: relative; }
+.span-row {
+  display: flex; align-items: center; height: 32px; margin: 2px 0;
+  cursor: pointer; border-radius: 4px; position: relative; transition: background 0.1s;
+}
+.span-row:hover { background: rgba(255,255,255,0.03); }
+.span-row.selected { background: rgba(88,166,255,0.08); outline: 1px solid #58a6ff; }
+
+/* Label area */
+.span-label {
+  width: 280px; min-width: 280px; display: flex; align-items: center;
+  padding-left: 8px; gap: 6px; font-size: 12px; white-space: nowrap; overflow: hidden;
+}
+.span-label .toggle {
+  width: 16px; text-align: center; font-size: 10px; color: #8b949e;
+  cursor: pointer; flex-shrink: 0; user-select: none;
+}
+.span-label .toggle:hover { color: #f0f6fc; }
+.span-label .type-dot {
+  width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0;
+}
+.span-label .name-text { overflow: hidden; text-overflow: ellipsis; }
+
+/* Bar area */
+.span-bar-container { flex: 1; position: relative; height: 100%; }
+.span-bar {
+  position: absolute; top: 6px; height: 20px; border-radius: 3px;
+  min-width: 4px; opacity: 0.85; transition: opacity 0.15s;
+}
+.span-row:hover .span-bar { opacity: 1; }
+.span-bar .duration-text {
+  position: absolute; right: 4px; top: 2px; font-size: 10px;
+  color: #fff; white-space: nowrap; text-shadow: 0 1px 2px rgba(0,0,0,0.5);
+}
+
+/* Time axis */
+.time-axis {
+  display: flex; align-items: center; height: 28px; margin: 8px 0 4px;
+  padding-left: 288px; position: relative;
+}
+.time-axis .tick {
+  position: absolute; font-size: 10px; color: #484f58; transform: translateX(-50%);
+}
+.time-axis .line {
+  position: absolute; top: 0; width: 1px; height: 12px; background: #21262d;
+}
+
+/* ================================================================== */
+/* Detail panel                                                        */
+/* ================================================================== */
+.detail-panel {
+  margin-top: 20px; background: #161b22; border: 1px solid #21262d;
+  border-radius: 8px; overflow: hidden;
+}
+.detail-header {
+  padding: 12px 16px; border-bottom: 1px solid #21262d; display: flex;
+  align-items: center; gap: 8px; font-size: 14px; font-weight: 600; color: #f0f6fc;
+}
+.detail-header .type-dot { width: 10px; height: 10px; border-radius: 50%; }
+.detail-body { padding: 16px; }
+.detail-grid { display: grid; grid-template-columns: 120px 1fr; gap: 8px 16px; font-size: 13px; }
+.detail-grid .key { color: #8b949e; }
+.detail-grid .val { color: #e6edf3; word-break: break-all; }
+
+.detail-section { margin-top: 16px; }
+.detail-section h3 {
+  font-size: 12px; font-weight: 600; color: #8b949e; text-transform: uppercase;
+  margin-bottom: 8px; letter-spacing: 0.5px;
+}
+.detail-section pre {
+  background: #0d1117; border: 1px solid #21262d; border-radius: 6px;
+  padding: 12px; font-size: 12px; line-height: 1.5; overflow: auto;
+  max-height: 400px; color: #c9d1d9; white-space: pre-wrap; word-break: break-all;
+}
+
+/* ================================================================== */
+/* Color map per span type                                             */
+/* ================================================================== */
+.type-AGENT      { --type-color: #58a6ff; }
+.type-SUB_AGENT  { --type-color: #a371f7; }
+.type-LLM        { --type-color: #3fb950; }
+.type-TOOL       { --type-color: #d29922; }
+.type-COMPACTION { --type-color: #f85149; }
+
+.type-dot.agent      { background: #58a6ff; }
+.type-dot.sub_agent  { background: #a371f7; }
+.type-dot.llm        { background: #3fb950; }
+.type-dot.tool       { background: #d29922; }
+.type-dot.compaction { background: #f85149; }
+.span-bar            { background: var(--type-color, #8b949e); }
+
+/* ================================================================== */
+/* Loading                                                             */
+/* ================================================================== */
+.loading { display: flex; align-items: center; justify-content: center; padding: 40px; color: #8b949e; }
+.spinner { width: 20px; height: 20px; border: 2px solid #21262d; border-top-color: #58a6ff; border-radius: 50%; animation: spin 0.8s linear infinite; margin-right: 8px; }
+@keyframes spin { to { transform: rotate(360deg); } }
+</style>
+</head>
+<body>
+
+<!-- ===== Sidebar ===== -->
+<aside class="sidebar">
+  <div class="sidebar-header">📊 Trace Files</div>
+  <div class="file-list" id="fileList"><div class="loading"><div class="spinner"></div>Loading...</div></div>
+</aside>
+
+<!-- ===== Main ===== -->
+<main class="main">
+  <div class="toolbar">
+    <h1 id="pageTitle">NexAU Trace Visualizer</h1>
+    <span class="summary" id="toolbarSummary"></span>
+  </div>
+  <div class="content" id="content">
+    <div class="empty-state">
+      <div class="icon">📂</div>
+      <div class="text">Select a trace file from the sidebar</div>
+    </div>
+  </div>
+</main>
+
+<script>
+// ======================================================================
+// Constants
+// ======================================================================
+const TYPE_COLORS = {
+  AGENT:      { css: 'agent',      hex: '#58a6ff' },
+  SUB_AGENT:  { css: 'sub_agent',  hex: '#a371f7' },
+  LLM:        { css: 'llm',        hex: '#3fb950' },
+  TOOL:       { css: 'tool',       hex: '#d29922' },
+  COMPACTION: { css: 'compaction', hex: '#f85149' },
+};
+
+let currentTraces = null;   // currently loaded trace data
+let selectedSpanId = null;
+
+// ======================================================================
+// Init
+// ======================================================================
+document.addEventListener('DOMContentLoaded', loadFileList);
+
+// ======================================================================
+// API
+// ======================================================================
+async function api(path) {
+  const res = await fetch(path);
+  if (!res.ok) throw new Error(`${res.status}: ${path}`);
+  return res.json();
+}
+
+// ======================================================================
+// File list
+// ======================================================================
+async function loadFileList() {
+  const list = document.getElementById('fileList');
+  try {
+    const files = await api('/api/traces');
+    if (!files.length) {
+      list.innerHTML = '<div style="padding:16px;color:#8b949e;font-size:13px">No trace files found in traces/</div>';
+      return;
+    }
+    list.innerHTML = files.map((f, i) => `
+      <div class="file-item" data-file="${f.name}" onclick="selectFile('${f.name}', this)">
+        <div class="name">${f.name}</div>
+        <div class="meta">
+          <span>📦 ${f.total_spans} spans</span>
+          <span>🌳 ${f.root_spans} roots</span>
+          ${f.types.map(t => `<span class="type-badge" style="background:${TYPE_COLORS[t]?.hex||'#8b949e'}">${t}</span>`).join('')}
+        </div>
+      </div>
+    `).join('');
+  } catch(e) {
+    list.innerHTML = `<div style="padding:16px;color:#f85149;font-size:13px">Failed to load: ${e.message}</div>`;
+  }
+}
+
+async function selectFile(filename, el) {
+  document.querySelectorAll('.file-item').forEach(i => i.classList.remove('active'));
+  el.classList.add('active');
+  selectedSpanId = null;
+
+  const content = document.getElementById('content');
+  content.innerHTML = '<div class="loading"><div class="spinner"></div>Loading trace...</div>';
+
+  try {
+    currentTraces = await api(`/api/traces/${filename}`);
+    renderTraces(currentTraces);
+    document.getElementById('toolbarSummary').textContent = filename;
+  } catch(e) {
+    content.innerHTML = `<div class="empty-state"><div class="icon">❌</div><div class="text">Error: ${e.message}</div></div>`;
+  }
+}
+
+// ======================================================================
+// Render
+// ======================================================================
+function renderTraces(traces) {
+  const content = document.getElementById('content');
+  if (!traces.length) {
+    content.innerHTML = '<div class="empty-state"><div class="icon">📭</div><div class="text">Empty trace (no spans)</div></div>';
+    return;
+  }
+
+  // Flatten all spans with depth info
+  const allSpans = [];
+  let totalSpans = 0;
+  const typeCount = {};
+  let minTime = Infinity;
+  let maxTime = -Infinity;
+
+  function walk(span, depth) {
+    totalSpans++;
+    typeCount[span.type] = (typeCount[span.type] || 0) + 1;
+    const start = span.start_time;
+    let end = span.end_time || span.start_time;
+    // If no end_time but has children, estimate from child times
+    if (!span.end_time && span.children?.length) {
+      let childEnd = -Infinity;
+      for (const c of span.children) {
+        const ce = c.end_time || c.start_time;
+        if (ce > childEnd) childEnd = ce;
+      }
+      if (childEnd > end) end = childEnd;
+    }
+    if (start < minTime) minTime = start;
+    if (end > maxTime) maxTime = end;
+    allSpans.push({ ...span, depth, _end: end });
+    for (const child of (span.children || [])) walk(child, depth + 1);
+  }
+
+  for (const root of traces) walk(root, 0);
+
+  const totalDuration = (maxTime - minTime) * 1000; // ms
+
+  // ---- Build HTML ----
+  let html = '';
+
+  // Summary cards
+  html += '<div class="summary-cards">';
+  html += `<div class="card"><div class="label">Total Spans</div><div class="value">${totalSpans}</div></div>`;
+  html += `<div class="card"><div class="label">Root Spans</div><div class="value">${traces.length}</div></div>`;
+  html += `<div class="card"><div class="label">Total Duration</div><div class="value">${fmtMs(totalDuration)}</div></div>`;
+  for (const [t, c] of Object.entries(typeCount)) {
+    html += `<div class="card"><div class="label">${t}</div><div class="value" style="color:${TYPE_COLORS[t]?.hex||'#8b949e'}">${c}</div></div>`;
+  }
+  html += '</div>';
+
+  // Trace title
+  html += '<div class="trace-title">Waterfall Timeline</div>';
+
+  // Waterfall
+  const timeRange = maxTime - minTime || 1;
+  const waterfallWidth = 800; // px for the bar area
+  html += `<div class="waterfall" style="--bar-width:${waterfallWidth}px">`;
+
+  // Time axis
+  const tickCount = 6;
+  html += '<div class="time-axis">';
+  for (let i = 0; i <= tickCount; i++) {
+    const ms = (timeRange * 1000) * (i / tickCount);
+    const pct = (i / tickCount) * 100;
+    html += `<div class="tick" style="left:${pct}%">${fmtMs(ms)}</div>`;
+    if (i < tickCount) html += `<div class="line" style="left:${pct}%"></div>`;
+  }
+  html += '</div>';
+
+  // Span rows
+  for (const span of allSpans) {
+    const indent = span.depth * 20;
+    const hasChildren = span.children && span.children.length > 0;
+    const tc = TYPE_COLORS[span.type] || { css: '', hex: '#8b949e' };
+    const leftPct = ((span.start_time - minTime) / timeRange) * 100;
+    const widthPct = Math.max(((span._end - span.start_time) / timeRange) * 100, 0.5);
+    const durMs = (span._end - span.start_time) * 1000;
+    const selected = span.id === selectedSpanId ? ' selected' : '';
+
+    html += `<div class="span-row type-${span.type}${selected}" onclick="selectSpan('${span.id}')" data-span-id="${span.id}">`;
+    html += `<div class="span-label" style="padding-left:${indent + 8}px">`;
+    if (hasChildren) {
+      html += `<span class="toggle" onclick="event.stopPropagation();toggleChildren('${span.id}')">▼</span>`;
+    } else {
+      html += '<span class="toggle" style="visibility:hidden">●</span>';
+    }
+    html += `<span class="type-dot ${tc.css}"></span>`;
+    html += `<span class="name-text" title="${esc(span.name)}">${esc(span.name)}</span>`;
+    html += '</div>';
+
+    html += '<div class="span-bar-container">';
+    html += `<div class="span-bar" style="left:${leftPct}%;width:${widthPct}%">`;
+    if (widthPct > 10) {
+      html += `<span class="duration-text">${fmtMs(durMs)}</span>`;
+    }
+    html += '</div></div>';
+    html += '</div>';
+  }
+
+  html += '</div>'; // .waterfall
+
+  // Detail panel placeholder
+  html += '<div class="detail-panel" id="detailPanel" style="display:none"></div>';
+
+  content.innerHTML = html;
+}
+
+// ======================================================================
+// Span interaction
+// ======================================================================
+async function selectSpan(spanId) {
+  selectedSpanId = spanId;
+  const span = findSpan(currentTraces, spanId);
+  if (!span) return;
+
+  // Re-render to update selection highlight
+  renderTraces(currentTraces);
+
+  // Show detail panel
+  const panel = document.getElementById('detailPanel');
+  if (!panel) return;
+  panel.style.display = 'block';
+
+  const tc = TYPE_COLORS[span.type] || { css: '', hex: '#8b949e' };
+  const durMs = span.duration_ms != null ? fmtMs(span.duration_ms) : 'N/A';
+
+  let html = `<div class="detail-header"><span class="type-dot ${tc.css}"></span>${esc(span.name)}</div>`;
+  html += '<div class="detail-body">';
+  html += '<div class="detail-grid">';
+  html += `<div class="key">ID</div><div class="val">${span.id}</div>`;
+  html += `<div class="key">Type</div><div class="val">${span.type}</div>`;
+  html += `<div class="key">Parent</div><div class="val">${span.parent_id || '(root)'}</div>`;
+  html += `<div class="key">Duration</div><div class="val">${durMs}</div>`;
+  html += `<div class="key">Children</div><div class="val">${(span.children||[]).length}</div>`;
+  if (span.error) html += `<div class="key">Error</div><div class="val" style="color:#f85149">${esc(span.error)}</div>`;
+  html += '</div>';
+
+  if (span.inputs && Object.keys(span.inputs).length > 0) {
+    html += '<div class="detail-section"><h3>📥 Inputs</h3>';
+    html += `<pre>${JSON.stringify(span.inputs, null, 2)}</pre></div>`;
+  }
+  if (span.outputs && Object.keys(span.outputs).length > 0) {
+    html += '<div class="detail-section"><h3>📤 Outputs</h3>';
+    html += `<pre>${JSON.stringify(span.outputs, null, 2)}</pre></div>`;
+  }
+  if (span.attributes && Object.keys(span.attributes).length > 0) {
+    html += '<div class="detail-section"><h3>🏷 Attributes</h3>';
+    html += `<pre>${JSON.stringify(span.attributes, null, 2)}</pre></div>`;
+  }
+  html += '</div>';
+
+  panel.innerHTML = html;
+  panel.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+}
+
+function toggleChildren(spanId) {
+  // Simple approach: hide/show children rows
+  const targetSpan = findSpan(currentTraces, spanId);
+  if (!targetSpan) return;
+  const childIds = new Set((targetSpan.children || []).map(c => c.id));
+
+  // Toggle visibility of rows
+  let inside = false;
+  let depth = 0;
+  const rows = document.querySelectorAll('.span-row');
+  for (const row of rows) {
+    const sid = row.dataset.spanId;
+    if (sid === spanId) { inside = true; continue; }
+    if (!inside) continue;
+
+    const span = findSpan(currentTraces, sid);
+    if (!span) continue;
+    // todo: proper depth-based toggle — for now simple version
+  }
+  // Full depth-aware toggle would require more state — simplified for now
+}
+
+// ======================================================================
+// Helpers
+// ======================================================================
+function findSpan(traces, id) {
+  function search(spans) {
+    for (const s of spans) {
+      if (s.id === id) return s;
+      const found = search(s.children || []);
+      if (found) return found;
+    }
+    return null;
+  }
+  return search(traces);
+}
+
+function fmtMs(ms) {
+  if (ms == null) return 'N/A';
+  if (ms < 1) return `${(ms*1000).toFixed(0)}μs`;
+  if (ms < 1000) return `${ms.toFixed(1)}ms`;
+  if (ms < 60000) return `${(ms/1000).toFixed(2)}s`;
+  const m = Math.floor(ms / 60000);
+  const s = ((ms % 60000) / 1000).toFixed(0);
+  return `${m}m ${s}s`;
+}
+
+function esc(s) {
+  return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+</script>
+
+</body>
+</html>
