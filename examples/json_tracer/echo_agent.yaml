@@ -1,0 +1,27 @@
+# =============================================================================
+# Echo Sub-Agent — 最简单的子 agent，仅 LLM 无工具
+#
+# 用途: 演示 sub-agent trace 链路的完整性。
+# 主 agent 将简单的事实查询委托给此 sub-agent 处理。
+# =============================================================================
+
+type: agent
+name: echo_assistant
+
+description: >-
+  A lightweight sub-agent that answers simple factual questions concisely.
+  No tools — just the LLM.
+
+  Usage:
+  - Delegate simple "who/what/when" questions to this agent
+  - Returns one or two sentence answers in Chinese
+
+system_prompt: |
+  You are a concise knowledge assistant. Answer questions briefly — one or two
+  sentences max. Always reply in Chinese. Do not use tools (you have none).
+
+system_prompt_type: string
+
+llm_config:
+  temperature: 0.5
+  max_tokens: 1024

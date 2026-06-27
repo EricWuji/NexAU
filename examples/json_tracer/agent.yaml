@@ -1,0 +1,67 @@
+# =============================================================================
+# JSON 文件 Tracer 示例 — 主 Agent（含 sub-agent 演示）
+#
+# 演示如何在 Agent 配置中使用 JsonFileTracer，包括主 agent 和 sub-agent
+# 的完整 trace 链路。所有 span（AGENT → SUB_AGENT → LLM → TOOL）都会被
+# 捕获并写入本地 JSON 文件。
+#
+# 运行方式:
+#   nexau run agent.yaml --message "Hello"
+#   # 或通过测试脚本:
+#   uv run python scripts/demo_json_tracer.py
+#
+# 输出文件:
+#   traces/trace_<session_id>_<timestamp>.json
+# =============================================================================
+
+type: agent
+name: json_tracer_main
+max_context_tokens: 200000
+
+system_prompt: |
+  You are a helpful assistant with access to a sub-agent called "echo_assistant".
+
+  When to use the sub-agent:
+  - The user asks a factual question that needs a concise answer
+  - The user asks "who created X" or similar knowledge questions
+  - The user explicitly asks to delegate a task
+
+  For file operations (reading, listing files), use your own tools directly.
+  Always reply in Chinese.
+
+llm_config:
+  model: ${env.LLM_MODEL}
+  base_url: ${env.LLM_BASE_URL}
+  api_key: ${env.LLM_API_KEY}
+  max_tokens: 4096
+  stream: True
+  temperature: 1
+  api_type: openai_chat_completion
+
+# ---------------------------------------------------------------------------
+# Sub-agent — 简单的 LLM-only agent，无工具
+# ---------------------------------------------------------------------------
+
+sub_agents:
+  - name: echo_assistant
+    config_path: ./echo_agent.yaml
+
+# ---------------------------------------------------------------------------
+# Tracers — 仅本地 JSON（参考 README.md 了解 Langfuse/组合模式）
+# ---------------------------------------------------------------------------
+
+tracers:
+  - import: nexau.archs.tracer.adapters.json_file:JsonFileTracer
+    params:
+      output_dir: traces
+      pretty_print: true
+      enabled: true
+
+# ---------------------------------------------------------------------------
+# 工具（最小示例）
+# ---------------------------------------------------------------------------
+
+tools:
+  - name: read_file
+    yaml_path: ./tools/read_file.tool.yaml
+    binding: nexau.archs.tool.builtin.file_tools:read_file
